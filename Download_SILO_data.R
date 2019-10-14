@@ -53,7 +53,7 @@ dates.col<-firstcsv$YYYY.MM.DD # Get the dates
 raindf<-data.frame(dates.col) ; evapdf<-data.frame(dates.col)
 colnames(raindf) <- "Date";colnames(evapdf) <- "Date" # Call the column "Dates"
 # Start a loop 
-for (i in 1:length(lats)){ 
+for (i in 1:length(lats)){  
 # Read the raw file 
   raw<-read.csv(file = paste0(outputfolder
          ,attributetable$CATCH_NAME[i]
