@@ -11,6 +11,7 @@ attributetable<-read.dbf("C:/Dan/Uni/Big Swan/AED_SwanCatchments/3_Data/Spatial/
 lats<-format(round(attributetable$Y_CENTRE,3),nsmall=2) # SILO can't handle too many decimal places
 lons<-format(round(attributetable$X_CENTRE,3),nsmall=2)
 # Set a location for the output files
+#
 outputfolder<- "C:/Dan/Uni/Big Swan/AED_SwanCatchments/3_Data/Climate/RawClimate/SILO/Rain/"
 # Make a loop the length of the number of subcatchments you have
 for(i in 1:length(lats)){
