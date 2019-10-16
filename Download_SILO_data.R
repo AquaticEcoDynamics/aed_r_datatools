@@ -6,13 +6,13 @@
   # calculate x centre (longitude) and y centre (latitude)
   # save your edits. Close it.
 # Locate the attribute table and load it into R
-attributetable<-read.dbf("C:/Dan/Uni/Big Swan/AED_SwanCatchments/3_Data/Spatial/OverviewSpatial/EllenBrook/EllenSubs8.dbf")
+attributetable<-read.dbf("C: ... /EllenBrook/EllenSubs8.dbf")
 # Load the latitude and longitude into R
 lats<-format(round(attributetable$Y_CENTRE,3),nsmall=2) # SILO can't handle too many decimal places
 lons<-format(round(attributetable$X_CENTRE,3),nsmall=2)
 # Set a location for the output files
 #
-outputfolder<- "C:/Dan/Uni/Big Swan/AED_SwanCatchments/3_Data/Climate/RawClimate/SILO/Rain/"
+outputfolder<- "C: ... /RawClimate/SILO/Rain/"
 # Make a loop the length of the number of subcatchments you have
 for(i in 1:length(lats)){
 # This is the format that SILO requires. You can just paste it into a browser address bar 
