@@ -1,0 +1,166 @@
+
+## Make plot for all WQ parameters in stations in Western Australia
+
+library(ggplot2)
+library(dygraphs)
+library(xts)
+library(lubridate)
+library(dplyr)
+library(knitr)
+library(readxl)
+library(RColorBrewer)
+## K here is the number of folders which contain "*.xlsx" for specific station
+for (k in 32:49){
+  print(k)
+  this.dir<-(paste0("C:/Users/22574957/Desktop/120707/Split/Alilou/New folder (",k,")"))
+  files <- list.files(paste0(this.dir,"/"),pattern = "*.xlsx", full.names = T)
+
+my_data <- read_excel(files, col_types = c("text", 
+                                                   "text", "date", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric", "numeric", "numeric", "numeric", 
+                                                   "numeric", "numeric"))
+str(my_data)
+#make headers to be readable by R
+names(my_data)<- gsub(" ", "_", names(my_data))
+names(my_data)<- gsub("|", "", fixed=TRUE, names(my_data))
+names(my_data)<- gsub("%", "percent", names(my_data))
+names(my_data)<- gsub("{", "", fixed=TRUE,names(my_data))
+names(my_data)<- gsub("}", "", fixed=TRUE,names(my_data))
+names(my_data)<- gsub(">", "morethan", names(my_data))
+names(my_data)<- gsub("<", "lessthan", names(my_data))
+names(my_data)<- gsub("/", "_per_", names(my_data))
+#View(my_data)
+# make data frame
+N<- as.data.frame(my_data)
+# make even number
+evens<-seq(2,ncol(N),by=2)
+#select even column 
+N2<-select(N,evens)
+# make plot for WQ variables
+B<-names(N2)
+inc<-1;
+for( i in N2){
+  plt<- ggplot(N2, aes(x=my_data$Collected_Date_Time , y= i)) +
+    geom_point() +
+    ggtitle(B[inc]) +
+    xlab("Date") + ylab("unit")
+  #print(plt)
+  Sys.sleep(2)
+  fname<-paste(B[inc],".png",sep = "")
+ ggsave(fname, path = this.dir,width=60,height=30,units=c("cm"), dpi = 150)
+  inc<-inc+1
+}#end of loop
+###################### make plot for each year seperately
+B<-names(N2)
+inc<-1;
+for( i in N2){ 
+  plt<- ggplot(N2, aes(x = my_data$Collect_Month, y =i)) +
+    geom_point(color = "darkorchid4") +
+    facet_wrap( ~ my_data$Collect_Year) +
+    labs(title = B[inc],
+         subtitle = "",
+         y = "m3/s",
+         x = "Month of year") + theme_bw(base_size = 15) 
+  #print(plt)
+  Sys.sleep(2)
+  fname<-paste(B[inc],".png",sep = "_separate")
+  ggsave(fname, path = this.dir,width=50,height=50,units=c("cm"), dpi = 300)
+  inc<-inc+1
+}#end of loop
+
+}#end of loop k
+############################
+
+
+
