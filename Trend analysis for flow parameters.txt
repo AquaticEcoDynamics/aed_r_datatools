@@ -1,0 +1,205 @@
+
+## This script developed to analysis flow duration curve, base flow, the trend of maen flow, base flow, high flow, and low flow (droght trend analysis) for Western Australia flow data in R. 
+
+library(hydrostats)
+library(readxl)
+library(plyr)
+library(EcoHydRology)
+library(dplyr)
+library(bomrang)
+library(remotes)
+library(fasstr)
+library(EGRETci)
+library(FAdist)
+library(FlowScreen)
+library(hydroTSM)
+library(lfstat)
+library(Kendall)
+library(trend)
+
+setwd("C:/Users/22574957/Desktop/Stations/Missing data/Alilou/New folder (50)")
+# input files should have specific format see input files
+Pinjarra <- read_excel("Pinjarrah.xlsx")
+str(Pinjarra)
+Pin <- read_excel("Pin.xlsx")
+str(Pin)
+tiff(paste0("Hydrograph",".tiff"),width=1000, height=800)
+with(Pin, plot(Q~Date))
+dev.off()
+
+####### base flow based on a=0.975
+b<-baseflows(Pin,a=0.975, ts="mean")
+c<- baseflows(Pin,a=0.975, ts="annual")
+a<- baseflows(Pin,a=0.975, ts="daily")
+a$quickflow<-  a$Q - a$bf
+write.csv(a,file = "baseflow.csv")
+
+## plot flow vs base flow
+tiff(paste0("discharge VS baseflow",".tiff"),width=1000, height=800)
+with(a, plot(Q~bf))
+dev.off()
+## plot flow vs base flow index
+tiff(paste0("discharge VS baseflow index",".tiff"),width=1000, height=800)
+with(a, plot(Q~bfi))
+dev.off()
+## storm flows versus base flows.
+with(a, plot(quickflow~bfi))
+with(a, plot(quickflow~bf))
+# base flow based on a=0.925 for Australian Catchments
+n<-baseflows(Pin,a=0.925, ts="mean")
+m<- baseflows(Pin,a=0.925, ts="annual")
+l<- baseflows(Pin,a=0.925, ts="daily")
+with(l, plot(Q~bf))
+with(l, plot(Q~bfi))
+mean(l$bfi)
+l$quickflow<-  l$Q - l$bf
+with(l, plot(quickflow~bfi))
+
+############################################################################
+#############################################################
+#FlowScreen: Daily Streamflow Trend and Change Point Screening
+#1) Create custom axis starting on hyrologic year start month
+#Add hydrologic Year, month, and doy columns to a daily time series
+
+#caniapiscau.ts <- create.ts(caniapiscau, hyrstart=3), hyrstart define start month of hydrologic year.
+head(Pinjarra)
+Pinjarra$Date <- as.Date(Pinjarra$Date, format = "%m/%d/%Y")
+str(Pinjarra)
+with(Pinjarra, plot(Flow~Date))
+Pinjarra.ts <- create.ts(Pinjarra, hyrstart=4)
+#To make on specific column as.numeric
+nm1 <- grep("hmonth", names(Pinjarra.ts))
+Pinjarra.ts[nm1] <- lapply(Pinjarra.ts[nm1], as.numeric)
+#To make on specific column as.Date
+Date1 <- grep("Date", names(Pinjarra.ts))
+Pinjarra.ts[Date1] <- lapply(Pinjarra.ts[Date1], as.Date)
+str(Pinjarra.ts)
+
+###This function estimates the percentage of baseflow in a given period relative to the total annual
+res <- bf.seas(Pinjarra.ts, seas = c(5:8))
+#View(res)
+plot(res[3:28])
+res2 <- screen.metric(res, "Percent Annual Baseflow in May-Aug")
+####This function estimates the baseflow and calculates the mean, max, and min baseflow and baseflow index for a user defined time period.
+res1 <- bf.stats(Pinjarra.ts)
+tiff(paste0("Baseflow_statstics",".tiff"),width=1000, height=800)
+res3 <- screen.metric(res1[,2], "m3/s")
+dev.off()
+#This function extracts the partial duration series for all streamflow droughts based on a movingwindow quantile threshold. Also returns summary information (start date, end date, duration, deficitvolume) for each drought event.
+#dr.events(TS, Qdr = 0.2, WinSize = 30, IntEventDur = 10, EventDur = 15)
+res4 <- dr.events(Pinjarra.ts)
+events <- res4$DroughtEvents
+tiff(paste0("Hydrological Drought Duration",".tiff"),width=1000, height=800)
+plot(events$Start, events$Duration, pch=19, ylab="Drought Duration (days)", xlab="")
+dev.off()
+
+#Flow Duration Curve
+
+Pinjarra1 <- subset(Pinjarra, !is.na(Pinjarra$Flow))
+tiff(paste0("Flow Duration Curve",".tiff"),width=1000, height=800)
+FDC(Pinjarra1$Flow, title="Pinjarra River")
+dev.off()
+
+# summary plot of the annual flow regime
+tiff(paste0("The annual Flow Regime",".tiff"),width=1000, height=800, res = 100)
+regime(Pinjarra.ts)
+dev.off()
+# calculate high flow, low flow, and baseflow metrics
+
+str(Pinjarra.ts)
+res5 <- metrics.all(Pinjarra.ts)
+#View(res5)
+# plot histogram of changepoints for high flow, low flow, and baseflow metrics
+screen.cpts(res5, type="h")
+screen.cpts(res5, type="l")
+screen.cpts(res5, type="b")
+# or plot all changepoints together
+tiff(paste0("Thigh flow, low flow, and baseflow changepoints together",".tiff"),width=1000, height=800, res = 100)
+cpts <- screen.cpts(res5)
+dev.off()
+# create screening plots for high, low, and baseflow metrics
+tiff(paste0("high flow trend and changepoints ",".tiff"),width=1000, height=800, res = 100)
+screen.summary(res5, type="h")
+dev.off()
+tiff(paste0("low flow trend and changepoints ",".tiff"),width=1000, height=800, res = 100)
+screen.summary(res5, type="l")
+dev.off()
+tiff(paste0("Base flow trend and changepoints ",".tiff"),width=1000, height=800, res = 100)
+screen.summary(res5, type="b")
+dev.off()
+####################################################
+Pinjarra.ts$day<-format(as.Date(Pinjarra.ts$Date,format="%Y-%m-%d"), format = "%d")
+str(Pinjarra.ts)
+nm2 <- grep("day", names(Pinjarra.ts))
+Pinjarra.ts[nm2] <- lapply(Pinjarra.ts[nm2], as.numeric)
+names(Pinjarra.ts)<- gsub("Flow", "flow", names(Pinjarra.ts))
+names(Pinjarra.ts)<- gsub("hody", "baseflow", names(Pinjarra.ts))
+
+library(dplyr)
+Pinjarra.ts1<- Pinjarra.ts %>%
+  select(12,7,6,3,9,11)
+names(Pinjarra.ts1)<- gsub("hody", "baseflow", names(Pinjarra.ts1))
+
+Pinjarra1<- Pinjarra %>%
+  select(3, 4)
+names(Pinjarra1)<- gsub("Flow", "discharge", names(Pinjarra1))
+str(Pinjarra1)
+str(Pinjarra.ts1)
+str(Pinjarra.ts)
+### creat lfobj for xts
+Pinjarra.ts<-createlfobj(Pinjarra.ts)
+as.xts(Pinjarra.ts)
+
+##############################################################################
+####lfstat: Calculation of Low Flow Statistics for Daily Stream Flow Data
+# Identifying Low Flow Periods(LFP)
+# An interactive hydrograph
+
+Pinjarra.ts1 <- as.xts(Pinjarra.ts)["1991::2019", ]
+LFP <- find_droughts(Pinjarra.ts1)
+head(LFP)
+summary(LFP)
+plot(LFP)
+# To save interactive graph in html
+library(htmlwidgets)
+saveWidget(plot(LFP), file="C:/Users/22574957/Desktop/Stations/Missing data/Alilou/New folder (50)/Low Flow Periods.html")
+# threshold is to low, because there are many days with
+# zero flow observations
+# provide threshold as a constant value
+
+LFP <- find_droughts(Pinjarra.ts1, threshold = 0.2)
+head(LFP)
+summary(LFP)
+plot(LFP)
+saveWidget(plot(LFP), file="C:/Users/22574957/Desktop/Stations/Missing data/Alilou/New folder (50)/Low Flow Periods_threshold = 0.2.html")
+# provide threshold as a function
+r <- find_droughts(ray,
+                   threshold = function(x) quantile(x, 0.2, na.rm = TRUE))
+head(r)
+summary(r)
+plot(r)
+
+
+#################################################################
+
+####Flow Duration Curve with uncertainty bounds : hydroTSM
+## Loading daily streamflows at the station Pinjarra ##
+
+pin1<- zoo(Pin$Q, Pin$Date)
+q <- pin1
+# Giving a fictitious lower uncertainty band
+lband <- q - min(q, na.rm=TRUE)
+# Giving a fictitious upper uncertainty band
+uband <- q + mean(q, na.rm=TRUE)
+# Plotting the flow duration curve corresponding to 'q', with two uncertainty bounds
+tiff(paste0("Flow_duration Curve",".tiff"),width=1000, height=800, res = 100)
+fdcu(q, lband, uband)
+dev.off()
+
+
+
+
+
+
+
+
