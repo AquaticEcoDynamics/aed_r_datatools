@@ -1,0 +1,136 @@
+
+ ## This script devloped to make different graphs (interactive plot, monthly flow, time series) for flow analysis
+library(ggplot2)
+library(dygraphs)
+library(xts)
+library(lubridate)
+library(dplyr)
+library(knitr)
+library(readxl)
+library(RColorBrewer)
+
+setwd("C:/Users/22574957/Desktop/120708/Az/Flow graph/New folder (50)")
+# Read excell
+files <- list.files( pattern = "*.xlsx", full.names = T)
+my_data <- sapply(files, read_excel, simplify=FALSE) %>% 
+  bind_rows(.id = "id")
+
+#View(my_data )
+names(my_data)[1:24]<- c("id","Name","SiteRef","CollectedDate","DischargeMAX","Quality1","DischargeMEAN","Quality2","DischargeMIN",	"Quality3","DischargeMlTOTAL",	"Quality8","StageCTFMAX","Quality4","StageCTFmMEAN","Quality5",	"StageCTFmMIN","Quality6","STAGEmMAX", "Quality7", "STAGEmMEAN","Quality9", "STAGEmMIN","Quality10")
+head(my_data)
+#To work with and efficiently plot time series data, it is best to convert date and/or time data to a date/time class. As we have both date and time date, we will use the class POSIXct.
+#convert to date/time class - POSIX
+my_data$Date <- as.Date(my_data$CollectedDate, format = "%d/%m/%Y")
+my_data$Date <- as.POSIXct(my_data$Date)
+str(my_data)
+
+# How to make column of year, month and day.
+
+Year1<- as.Date(my_data$Date, format="%m-%d-%y")
+
+df <- data.frame(date = Year1,
+                 year = as.numeric(format(Year1, format = "%Y")),
+                 month = as.numeric(format(Year1, format = "%m")),
+                 day = as.numeric(format(Year1, format = "%d")))
+df$year
+df$month
+df$day
+#my_data <- my_data %>% mutate(month1 = df$month)
+my_data$MONTH<- df$month
+str(my_data)
+# to make a time series for flow parameters
+A<- select(my_data, Date,DischargeMAX,DischargeMEAN,DischargeMIN,DischargeMlTOTAL)
+A
+B<-names(A)
+inc<-1;
+for( i in A){
+  plt<- ggplot(A, aes(x= Date, y= i)) +
+    geom_point() +
+    ggtitle(B[inc]) +
+    xlab("Date") + ylab("m3/s")
+  print(plt)
+  Sys.sleep(2)
+  fname<-paste(B[inc],".png",sep = "")
+  ggsave(fname, width=60,height=30,units=c("cm"), dpi = 150)
+  inc<-inc+1
+}# end i loop
+
+
+
+### seperate day, month,and year
+
+Year1<- as.Date(my_data$Date, format="%m-%d-%y")
+
+df <- data.frame(date = Year1,
+                 year = as.numeric(format(Year1, format = "%Y")),
+                 month = as.numeric(format(Year1, format = "%m")),
+                 day = as.numeric(format(Year1, format = "%d")))
+df$year
+df$month
+df$day
+#my_data <- my_data %>% mutate(month1 = df$month)
+my_data$MONTH<- df$month
+str(my_data)
+
+#3 make a time series based on each month of every year
+A<- select(my_data, Date,DischargeMAX,DischargeMEAN,DischargeMIN,DischargeMlTOTAL)
+A
+B<-names(A)
+inc<-1;
+for( i in A){ 
+  plt<- ggplot(A, aes(x = my_data$MONTH, y =i)) +
+    geom_point(color = "darkorchid4") +
+    facet_wrap( ~ df$year) +
+    labs(title = B[inc],
+         subtitle = "",
+         y = "m3/s",
+         x = "Month of year") + theme_bw(base_size = 15) 
+  print(plt)
+  Sys.sleep(2)
+  fname<-paste(B[inc],".png",sep = "_separate")
+  ggsave(fname, width=50,height=50,units=c("cm"), dpi = 300)
+  inc<-inc+1
+}
+
+######## make a plot for specific time
+
+startTime <- as.POSIXct("2013-08-15 00:00:00")
+endTime <- as.POSIXct("2018-10-15 00:00:00")
+
+# create a start and end time R object
+start.end <- c(startTime,endTime)
+start.end
+
+# plot the data - 2013-08-15, 2018-10-15, theme_bw(base_size = 12)= font of lables
+A<- select(my_data, Date,DischargeMAX,DischargeMEAN,DischargeMIN,DischargeMlTOTAL)
+A
+B<-names(A)
+inc<-1;
+for( i in A  ){
+  plt<-ggplot(A,
+              aes(Date, i)) +
+    geom_point(alpha = 0.1,size=5, aes(color = B[inc])) +
+    scale_x_datetime(limits=start.end) +
+    xlab("Date") + ylab(B[inc]) +
+    ggtitle(" 2013-08-15, 2018-10-15")+ theme_bw(base_size = 20)
+  print(plt)
+  Sys.sleep(2)
+  fname<-paste(B[inc],".png",sep = "_spcificDate")
+  ggsave(fname, width=50,height=30,units=c("cm"), dpi = 300)
+  inc<-inc+1
+  
+}# end i loop
+
+######## interactive plot for DischargeMEAN
+timeSeries <- xts(x = my_data$DischargeMEAN,order.by = my_data$Date)
+interact_time <- dygraph(timeSeries)
+interact_time
+# create a basic interactive element
+interact_time2 <- dygraph(timeSeries) %>% dyRangeSelector()
+interact_time2
+
+
+
+
+
+
