@@ -1,0 +1,94 @@
+
+# To fid common statistical period for flow station in Western Austraila
+library(ggplot2)
+library(dygraphs)
+library(xts)
+library(lubridate)
+library(dplyr)
+library(knitr)
+library(readxl)
+library(RColorBrewer)
+
+for (k in 1:50){
+  print(k)
+this.dir<-(paste0("C:/Users/22574957/Desktop/120708/Az/Split Results/New folder (",k,")"))
+# Read excell
+files <- list.files( pattern = "*.xlsx", full.names = T)
+files <- list.files(paste0(this.dir,"/"),pattern = "*.xlsx", full.names = T)
+
+
+my_data <- sapply(files, read_excel, simplify=FALSE) %>% 
+  bind_rows(.id = "id")
+#my_data <- read_excel("613007.xlsx")
+#View(my_data )
+names(my_data)[1:24]<- c("id","Name","SiteRef","CollectedDate","DischargeMAX","Quality1","DischargeMEAN","Quality2","DischargeMIN",	"Quality3","DischargeMlTOTAL",	"Quality8","StageCTFMAX","Quality4","StageCTFmMEAN","Quality5",	"StageCTFmMIN","Quality6","STAGEmMAX", "Quality7", "STAGEmMEAN","Quality9", "STAGEmMIN","Quality10")
+# head(my_data)
+#To work with and efficiently plot time series data, it is best to convert date and/or time data to a date/time class. As we have both date and time date, we will use the class POSIXct.
+#convert to date/time class - POSIX
+my_data$Date <- as.Date(my_data$CollectedDate, format = "%d/%m/%Y")
+#my_data$Date <- as.POSIXct(my_data$Date)
+#str(my_data)
+#View(my_data)
+Year1<- as.Date(my_data$Date, format="%m-%d-%y")
+
+df <- data.frame(date = Year1,
+                 year = as.numeric(format(Year1, format = "%Y")),
+                 month = as.numeric(format(Year1, format = "%m")),
+                 day = as.numeric(format(Year1, format = "%d")))
+df$year
+df$month
+df$day
+my_data$YEAR<- df$year
+#str(my_data)
+#my_data <- my_data %>% mutate(month1 = df$month)
+my_data$MONTH<- df$month
+#str(my_data)
+#B<-names(A)
+#inc<-1;
+#colnames(C)<-B
+#dim(C); dim(A); dim(A2)
+#ncol(C)
+#C[,1]<-as.Date(A$Date)
+#View(C)
+A<- select(my_data, Date,DischargeMAX,DischargeMEAN,DischargeMIN,DischargeMlTOTAL)
+A2<-as.matrix(A)
+C<-matrix(data = NA,nrow=nrow(A),ncol=ncol(A))
+for(i in 2:ncol(C)){
+  for(j in 1:nrow(C)){
+  if(!is.na(A2[j,i])){C[j,i]<-i}
+  } # end j
+} # end i
+
+#View(C)
+
+#final
+png(paste0(this.dir,"/statstical",k,".png"))
+colseq<-c("red","blue","forestgreen","grey39")
+
+plot(my_data$YEAR,C[,5], type = "l",  col=colseq[1]
+     ,ylim = c(0,10)
+     ,axis=NULL
+     # ,xlim=c(,)
+)
+for (i in 2:ncol(C)){
+  lines(my_data$YEAR,C[,i], type = "l",  col=colseq[i])
+  text(x=1995,y=5,labels = "DischargeMlTOTAL")
+  text(x=1995,y=3,labels = "DischargeMean")
+  text(x=1995,y=4,labels = "DischargeMIN")
+  text(x=1995,y=2,labels = "DischargeMAX")
+  
+}
+dev.off()
+
+} # end giant k loop
+
+
+#####################################
+
+
+
+
+# dev.off();dev.off();dev.off();dev.off();dev.off();dev.off();dev.off();dev.off();dev.off();dev.off();dev.off();dev.off();dev.off();dev.off();dev.off();dev.off();dev.off();dev.off();
+
+
+
