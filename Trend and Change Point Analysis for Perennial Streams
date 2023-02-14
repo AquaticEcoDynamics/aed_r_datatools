@@ -1,0 +1,3441 @@
+library(hydrostats)
+library(plyr)
+library(dplyr)
+library(fasstr)
+library(FlowScreen)
+library(hydroTSM)
+library(lfstat)
+library(openxlsx)
+library(tidyverse)
+library(xts)
+library(readxl)
+library(scales)
+library(plotrix)
+library(ggplot2)
+library(tidyr)
+library(ggpubr)
+library(tibble)
+library(rlang)
+library(gridExtra)
+library(egg)
+library(grid)
+library(hrbrthemes)
+library(viridis)
+library(readr)
+library(rkt)
+library(trend)
+library(boot)
+library(plotrix)
+library(data.table)
+####
+library(DT)
+library(formattable)
+library(rkt)
+library(HKprocess)
+library(ecp)
+library(lubridate)
+########################## Seasonal MK trend test for Flow
+setwd("C:/Users/22574957/Desktop/Revise 2 JoH/Flow/611004")
+flow <- read_excel("611004.xlsx")
+Flow<- flow %>% dplyr::select(3,6)
+Flow<- na.omit(Flow) 
+colnames(Flow)<- c("date","Q")
+Flow$Q<-as.numeric(Flow$Q)
+Flow_FDC<-Flow
+### Area m2=10^6 mm^2 and Q m3=1000000000=10^9 mm^3
+Area<-2201160828#*(10^6)
+#Area<-(Area)/(10^9)
+str(Area)
+Flow$Q_GL <- (Flow$Q*86400*1000)/(Area)
+#########flow/catchment area=mm
+str(Flow$Q)
+#Flow$Q_GL <- ((Flow$Q)/119140807649.60)
+#Flow$Q_GL<-Flow$Q
+Flow<-Flow%>% dplyr::select(1,3)
+str(Flow)
+#write.xlsx(Flow, "flow.xlsx")
+#plot(Flow)
+#view(Flow)
+################## avarage flow based on month of each year
+ts_Flow <- xts(Flow$Q_GL, as.Date(Flow$date, "%Y-%m-%d"))
+# convert daily data to annual and monthly
+ts_m_flow = apply.monthly(ts_Flow, sum)
+ts_y_flow = apply.yearly(ts_Flow, sum)
+##ts_q = apply.quarterly(ts, sum)
+ts_m_f=data.frame(sum_flow=coredata(ts_m_flow),date=index(ts_m_flow))
+ts_y_f=data.frame(sum_flow=coredata(ts_y_flow),date=index(ts_y_flow))
+Flow_monthly = ts_m_f %>% 
+  mutate(date = ymd(date)) %>% 
+  mutate_at(vars(date), funs(year, month, day))
+Flow_yearly = ts_y_f %>% 
+  mutate(date = ymd(date)) %>% 
+  mutate_at(vars(date), funs(year, month, day))
+colnames(Flow_monthly) <- c("sum_flow","date","Year","Month","Day")
+colnames(Flow_yearly) <- c("sum_flow","date","Year","Month","Day")
+######### Making hydrological year
+Flow_monthly$hyear<- ifelse(Flow_monthly$Month>=5,Flow_monthly$Year,Flow_monthly$Year-1)
+###### Rainfall for partial SMK Test
+Rainfall <- read_excel("Rainfall.xlsx")
+############## SMK TEST FLOW
+Tr_flow<-rkt(Flow_monthly$hyear,Flow_monthly$sum_flow,Flow_monthly$Month,,TRUE)
+print(Tr_flow)
+capture.output(summary(print(Tr_flow)), file = " Flow SMK test results.txt")
+####################  partial SMK TEST FLOW
+Tr_partial_flow<-rkt(Flow_monthly$hyear,Flow_monthly$sum_flow,Flow_monthly$Month,Rainfall$PRCP,TRUE)
+print(Tr_partial_flow)
+capture.output(summary(print(Tr_partial_flow)), file = " Flow Partial SMK test results.txt")
+#####################
+flow_TS<-ts(Flow_monthly[, 1], start = c(Flow_monthly$Year[1], Flow_monthly$Month[1]),end=c(Flow_monthly$Year[length(Flow_monthly$Year)],Flow_monthly$Month[length( Flow_monthly$Month)]), frequency = 12)
+#########Change point detection using Lanzantes test
+tiff(paste0("flow_monthly_lanzante_test ",".tiff"),width=1500, height=1000, res = 300)
+plot(flow_TS)
+s.res <- lanzante.test(flow_TS)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean(flow_TS[1:i])
+s.2 <- mean(flow_TS[(i+1):n])
+s <- ts(c(rep(s.1,i), rep(s.2,(n-i))))
+tsp(s) <- tsp(flow_TS)
+lines(s, col=2,lty=1)
+print(s.res)
+dev.off()
+###################################
+############################CDFM for monthly annuall data
+Mean<- mean(Flow_monthly$sum_flow)
+Flow_monthly$Pi=((Flow_monthly$sum_flow-Mean)/12)
+Flow_monthly$CDFM<- cumsum(Flow_monthly$Pi) # replace the cell freq.s by cumulative freq.s
+#################################################################################
+lims <- c(min_date=min(Flow_monthly$date),max_date=max(Flow_monthly$date))
+Flowmonthly1<-ggplot(Flow_monthly)+geom_line( aes(x=date, y=sum_flow),color= "black")
+Flowmonthly2<-Flowmonthly1+geom_line(aes(x=date, y=CDFM),alpha = 0.6, size = 0.7,color= "blue")
+Flowmonthly3<-Flowmonthly2+geom_smooth(aes(x=date, y=CDFM),method="gam",color="red")+xlab("Date")+ylab("Monthly Runoff (mm)")
+Flowmonthly4<-Flowmonthly3+scale_y_continuous(sec.axis = sec_axis(name ="CDFM (mm)",~ . + 0))
+Flowmonthly5<- Flowmonthly4+theme_bw()
+Flowmonthly5
+dev.off()
+###########################
+#################################### monthly flow
+s.res <- lanzante.test(Flow_monthly$sum_flow)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( Flow_monthly$sum_flow[1:i])
+s.2 <- mean( Flow_monthly$sum_flow[(i+1):n])
+sm<- ts(c(rep(s.1,i), rep(s.2,(n-i))))
+sm<-as.data.frame(as.numeric(sm))
+Flow_monthly$sm<-sm$`as.numeric(sm)`
+p_value <- s.res$p.value
+str(p_value)
+FM<- if(p_value > 0.05){print("LAT (p>0.05)")} else if(p_value > 0.01 & p_value < 0.05){print("LAT (p<0.05)")} else{print("LAT (p<0.01)")}
+my_text <- FM
+my_grob = grid.text(my_text, x=0.71,  y=0.9, gp=gpar(col="black", fontsize=7, fontface="bold"))
+year=Flow_monthly[i,2]
+
+Flowmonthly10<-Flowmonthly5+geom_line(aes(x=date,y=Flow_monthly$sm),colour="black")
+Flowmonthly11<-Flowmonthly10+ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+ 
+  annotation_custom(my_grob)+geom_vline(aes(xintercept = year),size = 0.7,color= "black",linetype="dashed")
+Flowmonthly11
+dev.off()
+###########################################
+####################### Orginal MK test for annual data OMK TEST
+##view(Flow_yearly)
+Flow_yearly$yearfraction<-(Flow_yearly$Year+0.110)
+TR_annual_flow<-rkt(Flow_yearly$yearfraction,Flow_yearly$sum_flow)
+print(TR_annual_flow)
+capture.output(summary(print(TR_annual_flow)), file = " flow_annual MK test results.txt")
+
+################################# ECP
+#### ENERGY AGGLOMERATIVE
+###x and X1 should be mattrix
+Flow1<-Flow_yearly%>% dplyr::select(1)
+Flow1<- as.matrix(Flow1)
+x1= rep(c(min(Flow_yearly$Year):max(Flow_yearly$Year)), times= c(1))
+########################
+n=length(Flow_yearly$date)
+num=1
+mem <- vector()
+
+while (n>10) {
+  
+  x= rep(c(num), times= c(10))
+  
+  n=n-10
+  
+  num=num+1
+  
+  mem <- append(mem, x)
+  
+}
+
+x= rep(c(num), times= c(n))
+
+mem <- append(mem, x)
+
+print(mem)
+#### mem= c=shows possible number of change point and time should the same as x=Flow1 length
+tiff(paste0("flow_annual_ECP test",".tiff"),width=1500, height=1000, res = 300)
+CP_Flow = e.agglo(X=Flow1,member=mem,alpha=2,penalty=function(cp,Xts) 0)
+CP_Flow$estimates
+CP_Flow$cluster
+#plot(CP_Flow$cluster)
+plot(x1, CP_Flow$cluster,
+     main="ECP test flow annual",
+     xlab = "Year",
+     ylab="cluster",
+     type="p",
+     col="blue")
+dev.off()
+#####################################
+##################################### OMK test for ANNUAL FLOW
+TR_annual_flow<-rkt(Flow_yearly$yearfraction,Flow_yearly$sum_flow)
+print(TR_annual_flow)
+capture.output(summary(print(TR_annual_flow)), file = " Flow_annual MK test results.txt")
+TR_annual_flow$sl
+TR_annual_flow$B
+b0<- median(Flow_yearly$sum_flow)-(TR_annual_flow$B * median(Flow_yearly$Year))
+Flow_yearly$overall_slope<- b0+(TR_annual_flow$B * Flow_yearly$Year)
+a1<-as.character(Flow_yearly$Year[1]) 
+b1<-as.character(Flow_yearly$Year[length(Flow_yearly$Year)]) 
+z1<-as.character(lapply(TR_annual_flow$B, round,2))
+Flow_yearly$`Sens Slope`<- paste("a)",a1,"-",b1,":"," ",z1," ","mm/yr",sep='')
+######################################
+###################################### MKLTP tEST FOR ANNUALL Flow
+Flow_yearly$MKLTP.Sig<-as.numeric (NA)
+Flow_yearly$Mean<-as.numeric (NA)
+Flow_yearly$Line<-as.numeric (NA)
+Flow_yearly$overll_line<-as.numeric (Flow_yearly$overall_slope)
+Flow_yearly$Line.pvalue<-as.character(NA)
+Flow_yearly$Mid_date<-as.Date.numeric(NA)
+Flow_yearly$mLine<- as.numeric(NA)
+######################################
+Flow_yearly$Max_date<- as.Date.numeric(NA) 
+Flow_yearly$ECP<-as.character(NA) 
+Flow_yearly$Seq_p.value<-as.numeric (NA)
+Flow_yearly$MKLTP_p.value<-as.numeric (NA)
+#######################################
+#######################################
+myts_Annuall<- ts(Flow_yearly$sum_flow, start=c(min(Flow_yearly$Year)), end=c(max(Flow_yearly$Year)), frequency=1)
+MKLTP_Annuall_Flow<- MannKendallLTP(myts_Annuall)
+Flow_yearly$MKLTP.Sig<- if (MKLTP_Annuall_Flow$Mann_Kendall_LTP[2]>0.01){
+  paste(lapply(MKLTP_Annuall_Flow$Mann_Kendall_LTP[2], round,2))} else {0.001}
+Flow_yearly$Line.pvalue<-if (Flow_yearly$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",Flow_yearly$MKLTP.Sig,")", sep = "")} else{NA}
+Flow_yearly$Mid_date<-min(Flow_yearly$date)
+##view(Flow_yearly)
+############################
+Flow_yearly$Seq<-as.numeric(CP_Flow$cluster) 
+max(Flow_yearly$Seq)
+max(length(Flow_yearly$Seq))
+ddddddddd<-as.numeric( which(CP_Flow$cluster == max(CP_Flow$cluster)))
+Flow_yearly$Seq[max(ddddddddd)+1]
+jj<-max(ddddddddd)
+JJJ<-as.numeric( length(Flow_yearly$Seq))
+Flow_yearly$Seq[max(ddddddddd)+1]
+i=Flow_yearly$Seq[max(ddddddddd)+1]
+Flow_yearly$Seq[jj:JJJ]<- 
+  if(i < as.numeric(Flow_yearly$Seq[max(ddddddddd)])) {as.numeric(max(CP_Flow$cluster)+1)} else{Flow_yearly$Seq}
+
+################# SUBSET THE DATA BASED ON ecp
+
+#for (i in Flow_yearly$Seq){  
+# m<- assign(paste("segment_", i, sep = "_"),subset(Flow_yearly, Seq==i))}
+
+######################################
+##view(Flow_yearly)
+Max_Seq_annuall<-max(Flow_yearly$Seq)
+NNNNN<-plyr::ddply(Flow_yearly, plyr::.(Seq), function(m){
+  FD<-rkt(m$yearfraction,m$sum_flow)
+  capture.output(summary(print(FD)), file = " Flow_Annuall MK test results for segments.txt")
+  b0<- median(m$sum_flow)-(FD$B* median(m$Year))
+  m$overall_slope<- b0+(FD$B*m$Year)
+  a3<-as.character(m$Year[1]) 
+  b3<-as.character(m$Year[length(m$Year)]) 
+  z3<-as.character(lapply(FD$B, round,2))
+  m$`Sens Slope`<- paste( (if (m$Seq==1){"b)"} else if (m$Seq==2){"c)"} else if (m$Seq==3){"d)"} else if (m$Seq==4){"e)"} else if  (m$Seq==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+  m$Max_date<- if (m$Seq< Max_Seq_annuall){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+  m$ECP<- if (m$Seq< Max_Seq_annuall){paste("ECP", m$Seq, sep = "")} else {as.character (NA)}
+  m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+  ###################################
+  myts_Annuall<- ts(m$sum_flow, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+  MKLTP_Annuall_Flow<- MannKendallLTP(myts_Annuall)
+  m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Annuall_Flow$Mann_Kendall_LTP[2], round,2),")", sep = "")
+  #########################
+  m$Mid_date<- min(m$date)
+  m$Mean<-as.numeric (mean(m$sum_flow))
+  m$MKLTP.Sig<- if (MKLTP_Annuall_Flow$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Annuall_Flow$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+  m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+  m$overll_line<-as.numeric (NA)
+  m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+  ########
+  return(m)
+}
+)
+##view(NNNNN)
+##################################
+total_flow_annuall <- rbind(Flow_yearly,NNNNN)
+##view(Flow_yearly)
+tiff(paste0(" Annual flow_trend_change point ",".tiff"),width=2000, height=1500, res = 350)
+annual_flowtrend1<-ggplot(total_flow_annuall, aes(x=date, color=`Sens Slope`))+
+  geom_point(aes( y=sum_flow),size=1)+
+  ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  xlab("Date")+ylab("Annual Runoff (mm/yr)")
+
+annual_flowtrend2<-annual_flowtrend1+geom_line(aes(y=overll_line),size=0.8,
+                                               linetype= if(total_flow_annuall$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+
+annual_flowtrend2<-annual_flowtrend2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+
+annual_flowtrend3<-annual_flowtrend2+geom_line(aes(y=mLine),size=0.8,
+                                               linetype= if(total_flow_annuall$MKLTP.Sig<= 0.05){"solid"} else {"twodash"})
+################################
+for (i in total_flow_annuall$Max_date){
+  annual_flowtrend3  <- annual_flowtrend3+ 
+    geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+}
+
+annual_flowtrend4<-annual_flowtrend3+geom_text(mapping = aes(x = Max_date,
+                                                             y = max(sum_flow),
+                                                             label = ECP,
+                                                             hjust = 1.5,
+                                                             vjust = 1.5),
+                                               size=3,
+                                               angle=90,
+                                               show.legend = FALSE,
+                                               data = total_flow_annuall)
+
+annual_flowtrend4<- annual_flowtrend4+geom_text(mapping = aes(x = Mid_date,
+                                                              y = max(sum_flow),
+                                                              fill=`Sens Slope`,
+                                                              label = Line.pvalue,
+                                                              hjust =1,
+                                                              vjust = 5.5),
+                                                size=2.5,
+                                                angle=90,
+                                                show.legend = FALSE,
+                                                data = total_flow_annuall)
+annual_flowtrend4
+dev.off()
+###############################
+#################### A divisive hierarchical estimation algorithm for multiple change point analysis
+################### e.divisive ENERGY DIVISIVE for annuall data
+for(i in 1:5){
+  ED_Annuall=e.divisive(X=Flow1,sig.lvl=0.05,R=199,k=NULL,min.size=10,alpha=1)
+  if(ED_Annuall$p.values[1]<=0.05) {
+    print("End of Loop") ;
+    break
+  } else{"KHHHH"}
+  
+}
+#view(Flow_yearly)
+#######################
+if (max(ED_Annuall$cluster)<2){capture.output(print("No change point"), file = " EDP No Change point for annuall flow.txt")} else{
+  flow_ED<-Flow_yearly %>% dplyr::select(1:8)
+  flow_ED$Seq_ED<-as.numeric(ED_Annuall$cluster)
+  ####################
+  #################### MKLTP
+  flow_ED$MKLTP.Sig<-as.numeric (NA)
+  flow_ED$Mean<-as.numeric (NA)
+  flow_ED$Line<-as.numeric (NA)
+  flow_ED$overll_line<-as.numeric (flow_ED$overall_slope)
+  flow_ED$Line.pvalue<-as.character(NA)
+  flow_ED$mLine<- as.numeric(NA)
+  #####################################
+  flow_ED$Max_date_ED<- as.Date.numeric(NA) 
+  flow_ED$EDP<-as.character(NA) 
+  flow_ED$p.value<-as.numeric (NA)
+  flow_ED$Seq_p.value<-as.numeric (NA)
+  flow_ED$MKLTP_p.value<-as.numeric (NA)
+  flow_ED$Mid_date_ED<-as.Date.numeric(NA)
+  #####################################
+  myts_Annuall_ED<- ts(flow_ED$sum_flow, start=c(min(flow_ED$Year)), end=c(max(flow_ED$Year)), frequency=1)
+  MKLTP_Annuall_Flow_ED<- MannKendallLTP(myts_Annuall_ED)
+  flow_ED$MKLTP.Sig<- if (MKLTP_Annuall_Flow_ED$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Annuall_Flow_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  flow_ED$Line.pvalue<-if (flow_ED$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",flow_ED$MKLTP.Sig,")", sep = "")} else{NA}
+  flow_ED$Mid_date_ED<-min(flow_ED$date)
+  ####
+  ddddddddd<-as.numeric( which(ED_Annuall$cluster == max(ED_Annuall$cluster)))
+  max(ddddddddd)
+  str(ddddddddd)
+  flow_ED$Seq_ED[max(ddddddddd)+1]
+  jj<-max(ddddddddd)
+  JJJ<-as.numeric( length(flow_ED$Seq_ED))
+  flow_ED$Seq_ED[max(ddddddddd)+1]
+  i=flow_ED$Seq_ED[max(ddddddddd)+1]
+  #################
+  
+  #for (i inflow_ED$Seq){  
+  # m<- assign(paste("segment_", i, sep = "_"),subset(flow_ED, Seq==i))}
+  
+  ######################################
+  Max_Seq_ED_annuall<-max(flow_ED$Seq_ED)
+  EDPP<-plyr::ddply(flow_ED, plyr::.(Seq_ED), function(m){
+    FD<-rkt(m$yearfraction,m$sum_flow)
+    FD$B
+    b0<- median(m$sum_flow)-(FD$B* median(m$Year))
+    m$overall_slope<- b0+(FD$B*m$Year)
+    length(m$Year)
+    a3<-as.character(m$Year[1]) 
+    b3<-as.character(m$Year[length(m$Year)]) 
+    z3<-as.character(lapply(FD$B, round,2))
+    m$`Sens Slope`<- paste( (if (m$Seq_ED==1){"b)"} else if (m$Seq_ED==2){"c)"} else if (m$Seq_ED==3){"d)"} else if (m$Seq_ED==4){"e)"} else if  (m$Seq_ED==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+    m$Max_date_ED<- if (m$Seq_ED< Max_Seq_ED_annuall){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+    m$p.value<- ED_Annuall$p.values[m$Seq_ED]
+    m$EDP<- if (m$Seq_ED< Max_Seq_ED_annuall){paste("EDP", m$Seq_ED," ","p","(",m$p.value,")", sep = "")} else {as.character (NA)}
+    m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+    m$Mid_date_ED<- median(m$date)
+    #######
+    myts_ED_annual <- ts(m$sum_flow, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+    MKLTP_Annuall_Flow_ED<- MannKendallLTP( myts_ED_annual)
+    m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Annuall_Flow_ED$Mann_Kendall_LTP[2], round,2),")", sep = "")
+    #########################
+    m$Mid_date_ED<- min(m$date)
+    m$Mean<-as.numeric (mean(m$sum_flow))
+    m$MKLTP.Sig<- if (MKLTP_Annuall_Flow_ED$Mann_Kendall_LTP[2]>0.01){
+      paste(lapply(MKLTP_Annuall_Flow_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+    m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+    m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+    m$overll_line<-as.numeric (NA)
+    m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+    #######################
+    return(m)
+  }
+  )
+  
+  #####################################################################################
+  total_flow_annuall_EDP <- rbind(flow_ED,EDPP)
+  ##view(total_flow_annuall_EDP)
+  tiff(paste0(" Annual_trend_EDP change point ",".tiff"),width=2000, height=1500, res = 350)
+  annual_flowtrend_EDP1<-ggplot( total_flow_annuall_EDP, aes(x=date,color=`Sens Slope`))+
+    geom_point(aes( y=sum_flow),size=1) +xlab("Date")+ylab("Annual Runoff (mm/yr)")+
+    ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+  annual_flowtrend_EDP2<-annual_flowtrend_EDP1+geom_line(aes(y=mLine),size=0.8,
+                                                         linetype= if( total_flow_annuall_EDP$MKLTP.Sig<= 0.050){"twodash"} else {"solid"})
+  annual_flowtrend_EDP3<-annual_flowtrend_EDP2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+  annual_flowtrend_EDP4<-annual_flowtrend_EDP3+geom_line(aes(y=overll_line),size=0.8,
+                                                         linetype= if(total_flow_annuall_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+  #########
+  
+  for (i in  total_flow_annuall_EDP$Max_date_ED){
+    annual_flowtrend_EDP4  <- annual_flowtrend_EDP4+ 
+      geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+  }
+  
+  annual_flowtrend_EDP4<-annual_flowtrend_EDP4+geom_text(mapping = aes(x = Max_date_ED,
+                                                                       y = max(sum_flow),
+                                                                       label = EDP,
+                                                                       hjust = 1.5,
+                                                                       vjust = 1.5),
+                                                         size=3,
+                                                         angle=90,
+                                                         show.legend = FALSE,
+                                                         data =total_flow_annuall_EDP)
+  
+  annual_flowtrend_EDP4<- annual_flowtrend_EDP4+geom_text(mapping = aes(x = Mid_date_ED,
+                                                                        y = max(sum_flow),
+                                                                        label = Line.pvalue,
+                                                                        hjust =1,
+                                                                        vjust = 5.5),
+                                                          size=2.5,
+                                                          angle=90,
+                                                          show.legend = FALSE,
+                                                          data =total_flow_annuall_EDP)
+  annual_flowtrend_EDP4
+}# end of if
+dev.off()
+
+#######################################
+###################################### WET OR DRY SEASON
+###################################### SEASONAL SMK TEST
+##view(Flow_monthly)
+flow_season<- Flow_monthly %>%
+  mutate(season = case_when(
+    Month %in% 5:10 ~ "Wet",
+    Month %in%  11:12  ~ "Dry",
+    Month %in%  1:4  ~ "Dry"))
+Flow_wetseason <- subset(flow_season, season %in% c("Wet"))
+Flow_dryseason <- subset(flow_season, season %in% c("Dry"))
+#######################################################
+##################### SMK test for  flow in wet and dry season
+Tr_flow_Dryseason<-rkt(Flow_dryseason$Year,Flow_dryseason$sum_flow,Flow_dryseason$Month,,TRUE)
+print(Tr_flow_Dryseason)
+capture.output(summary(print(Tr_flow_Dryseason)), file = "flow_dryseason SMK test results.txt")
+
+Tr_flow_Wetseason<-rkt(Flow_wetseason$Year,Flow_wetseason$sum_flow,Flow_wetseason$Month,,TRUE)
+print(Tr_flow_Wetseason)
+capture.output(summary(print(Tr_flow_Wetseason)), file = " flow_Wetseason SMK test results.txt")
+######################### Change point detection Lanzantes TEST for wet and dry season
+######################### dry season
+tiff(paste0(" Flow_dryseason_Lanzantes Change point ",".tiff"),width=1500, height=1000, res = 300)
+par(mfrow=c(1,1))
+plot(Flow_dryseason$Year,Flow_dryseason$sum_flow)
+s.res <- lanzante.test(Flow_dryseason$sum_flow)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( Flow_dryseason$sum_flow[1:i])
+s.2 <- mean(Flow_dryseason$sum_flow[(i+1):n])
+s <-(c(rep(s.1,i), rep(s.2,(n-i))))
+lines(Flow_dryseason$Year, s, col=2,lty=1)
+print(s.res)
+dev.off()
+################################## WET season
+tiff(paste0(" Flow_wetseason_Lanzantes Change point ",".tiff"),width=1500, height=1000, res = 300)
+par(mfrow=c(1,1))
+plot(Flow_wetseason$Year,Flow_wetseason$sum_flow)
+s.res <- lanzante.test(Flow_wetseason$sum_flow)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( Flow_wetseason$sum_flow[1:i])
+s.2 <- mean(Flow_wetseason$sum_flow[(i+1):n])
+s <-(c(rep(s.1,i), rep(s.2,(n-i))))
+lines(Flow_wetseason$Year, s, col=2,lty=1)
+print(s.res)
+dev.off()
+####################################
+################################# CDFM for seasonal data 
+################################
+Flow_dryseason<-Flow_dryseason %>% dplyr::select(1:6,10)
+Mean_dry<- mean(Flow_dryseason$sum_flow)
+Flow_dryseason$pi_dry=((Flow_dryseason$sum_flow-Mean_dry)/6)
+Flow_dryseason$CDFM_dry<- cumsum(Flow_dryseason$pi_dry) # replace the cell freq.s by cumulative freq.s
+################ wet
+Flow_wetseason<-Flow_wetseason %>% dplyr::select(1:6,10)
+Mean_wet<- mean(Flow_wetseason$sum_flow)
+Flow_wetseason$pi_wet=((Flow_wetseason$sum_flow-Mean_wet)/6)
+Flow_wetseason$CDFM_wet<- cumsum(Flow_wetseason$pi_wet) 
+##################################
+###############  dry monthly lAN TEST
+s.res <- lanzante.test(Flow_dryseason$sum_flow)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean(Flow_dryseason$sum_flow[1:i])
+s.2 <- mean(Flow_dryseason$sum_flow[(i+1):n])
+sd <-(c(rep(s.1,i), rep(s.2,(n-i))))
+sd<-as.data.frame(as.numeric(sd))
+Flow_dryseason$sd<-sd$`as.numeric(sd)`
+p_value <- s.res$p.value
+str(p_value)
+hhh<- if(p_value > 0.05){print("LAT (p>0.05)")} else if(p_value > 0.01 & p_value < 0.05){print("LAT (p<0.05)")} else{print("LAT (p<0.01)")}
+my_text1 <- hhh
+my_grob1 = grid.text(my_text1, gp=gpar(col="black", fontsize=7, fontface="bold"))
+year1=Flow_dryseason[i,2]
+lims<- c(min= as.Date(min(Flow_dryseason$date)), max= as.Date(max(Flow_dryseason$date)))
+flow_dry<-ggplot(Flow_dryseason)+geom_line(aes(x=date, y=sum_flow),color= "black")
+flow_dry<-flow_dry+geom_line(aes(x=date, y=CDFM_dry),alpha = 0.6, size = 0.7,color= "blue")
+flow_dry1<-flow_dry+geom_smooth(aes(x=date, y=CDFM_dry),method="gam",color="red")+xlab("Date")+ylab("Monthly Runoff (Dry)")
+flow_dry2<-flow_dry1+scale_y_continuous(sec.axis = sec_axis(name ="CDFM (mm)",~ . + 0))
+flow_dry3<-flow_dry2+geom_vline(aes(xintercept = year1),size = 0.7,color= "black",linetype="dashed")
+flow_dry4<-flow_dry3+geom_line(aes(x=date,y=sd),color= "black")+ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  annotation_custom(my_grob1, xmin = as.Date(max(year1,100)), xmax = as.Date(max(year1,100)), ymin =max(Flow_dryseason$sum_flow), ymax = max(Flow_dryseason$sum_flow))
+flow_dry4
+dev.off()
+##############
+##################################
+###############  wet monthly lAN TEST
+s.res <- lanzante.test(Flow_wetseason$sum_flow)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean(Flow_wetseason$sum_flow[1:i])
+s.2 <- mean(Flow_wetseason$sum_flow[(i+1):n])
+sd <-(c(rep(s.1,i), rep(s.2,(n-i))))
+sd<-as.data.frame(as.numeric(sd))
+Flow_wetseason$sd<-sd$`as.numeric(sd)`
+p_value <- s.res$p.value
+str(p_value)
+hwet<- if(p_value > 0.05){print("LAT (p>0.05)")} else if(p_value > 0.01 & p_value < 0.05){print("LAT (p<0.05)")} else{print("LAT (p<0.01)")}
+my_text2 <- hwet
+my_grob2 = grid.text(my_text2, gp=gpar(col="black", fontsize=7, fontface="bold"))
+year2=Flow_wetseason[i,2]
+lims<- c(min= as.Date(min(Flow_wetseason$date)), max= as.Date(max(Flow_wetseason$date)))
+flow_wet<-ggplot(Flow_wetseason)+geom_line(aes(x=date, y=sum_flow),color= "black")
+flow_wet<-flow_wet+geom_line(aes(x=date, y=CDFM_wet),alpha = 0.6, size = 0.7,color= "blue")
+flow_wet1<-flow_wet+geom_smooth(aes(x=date, y=CDFM_wet),method="gam",color="red")+xlab("Date")+ylab("Monthly Runoff (Wet)")
+flow_wet2<-flow_wet1+scale_y_continuous(sec.axis = sec_axis(name ="CDFM (mm)",~ . + 0))
+flow_wet3<-flow_wet2+geom_vline(aes(xintercept = year2),size = 0.7,color= "black",linetype="dashed")
+flow_wet4<-flow_wet3+geom_line(aes(x=date,y=sd),color= "black")+ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  annotation_custom(my_grob2, xmin = as.Date(max(year2,100)), xmax = as.Date(max(year2,100)), ymin =max(Flow_wetseason$sum_flow), ymax = max(Flow_wetseason$sum_flow))
+flow_wet4
+dev.off()
+#####################
+tiff(paste0("CDFM_Ruoff",".tiff"),width=2000, height=2500, res = 350)
+zk<-ggarrange(Flowmonthly11,flow_dry4,flow_wet4, nrow =3, ncol =1, heights = c(10, 10,10),
+              widths =c(0.5) )
+dev.off()
+########################################
+################################## orginal mann-kendal test
+########## change point for wet and dry season ANNUALY   
+Flow_wetseason
+ts_wet <- xts(Flow_wetseason$sum_flow, as.Date(Flow_wetseason$date, "%Y-%m-%d"))
+# convert daily data
+ts_wet_y = apply.yearly(ts_wet, sum)
+ts_y_w= data.frame(sum_flow=coredata(ts_wet_y),date=index(ts_wet_y))
+
+flow_wet<- data.frame(date = ts_y_w$date,
+                      Year = as.numeric(format(ts_y_w$date, format = "%Y")),
+                      Month = as.numeric(format(ts_y_w$date, format = "%m")),
+                      Day = as.numeric(format(ts_y_w$date, format = "%d")))
+flow_wet$sum_flow<-ts_y_w$sum_flow
+flow_wet$yearfraction<-(flow_wet$Year+0.110)
+##view(flow_wet)
+#####################################
+#####################################ECP change point wet season
+Flow_Wet<-flow_wet %>% dplyr::select(5)
+Flow_Wet<- as.matrix(Flow_Wet)
+x3= rep(c(min(flow_wet$Year):max(flow_wet$Year)), times= c(1))
+##################################### mem
+n1=length(flow_wet$date)
+num=1
+mem1 <- vector()
+
+while (n1>10) {
+  
+  x= rep(c(num), times= c(10))
+  
+  n1=n1-10
+  
+  num=num+1
+  
+  mem1 <- append(mem1, x)
+  
+}
+
+x= rep(c(num), times= c(n1))
+
+mem1 <- append(mem1, x)
+
+print(mem1)
+
+#### mem= rep=shows possible number of change point and time should the same as x=rainfall length
+CP_Flow_wet= e.agglo(Flow_Wet,member=mem1,alpha=2,penalty=function(cp,Xts) 0)
+par(mfrow=c(1,1))
+tiff(paste0(" ECP change point for annual wet flow ",".tiff"),width=1500, height=1000, res = 300)
+CP_Flow_wet$progression
+#plot(CP_Flow_wet$cluster)
+plot(x3, CP_Flow_wet$cluster,
+     main="ECP test annual wet Flow",
+     xlab = "Year",
+     ylab="cluster",
+     type="p",
+     col="blue")
+dev.off()
+
+########################################## orginal MK test for flow wet
+TR_wet_flow<-rkt(flow_wet$yearfraction,flow_wet$sum_flow)
+print(TR_wet_flow)
+capture.output(summary(print(TR_wet_flow)), file = " Flow_annual_wet MK test results.txt")
+TR_wet_flow$B
+b0<- median(flow_wet$sum_flow)-(TR_wet_flow$B * median(flow_wet$Year))
+flow_wet$overall_slope<- b0+(TR_wet_flow$B * flow_wet$Year)
+length(flow_wet$Year)
+a2<-as.character(flow_wet$Year[1]) 
+b2<-as.character(flow_wet$Year[length(flow_wet$Year)]) 
+z2<-as.character(lapply(TR_wet_flow$B, round,2))
+flow_wet$`Sens Slope`<- paste("a)",a2,"-",b2,":"," ",z2," ","mm/yr",sep='')
+
+################################################## MKLTP
+flow_wet$MKLTP.Sig<-as.numeric (NA)
+flow_wet$Mean<-as.numeric (NA)
+flow_wet$Line<-as.numeric (NA)
+flow_wet$overll_line<-as.numeric (flow_wet$overall_slope)
+flow_wet$Line.pvalue<-as.character(NA)
+flow_wet$Mid_date<-as.Date.numeric(NA)
+flow_wet$mLine<- as.numeric (NA)
+#######################
+myts_Wet<- ts(flow_wet$sum_flow, start=c(min(flow_wet$Year)), end=c(max(flow_wet$Year)), frequency=1)
+MKLTP_Wet_Flow<- MannKendallLTP(myts_Wet)
+flow_wet$MKLTP.Sig<- if (MKLTP_Wet_Flow$Mann_Kendall_LTP[2]>0.01){
+  paste(lapply(MKLTP_Wet_Flow$Mann_Kendall_LTP[2], round,2))} else {0.001}
+flow_wet$Line.pvalue<-if (flow_wet$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",flow_wet$MKLTP.Sig,")", sep = "")} else{NA}
+flow_wet$Mid_date<-min(flow_wet$date)
+############################
+flow_wet$Seq<-as.numeric(CP_Flow_wet$cluster) 
+max(flow_wet$Seq)
+max(length(flow_wet$Seq))
+ddddddddd<-as.numeric( which(CP_Flow_wet$cluster == max(CP_Flow_wet$cluster)))
+max(ddddddddd)
+str(ddddddddd)
+flow_wet$Seq[max(ddddddddd)+1]
+jj<-max(ddddddddd)
+JJJ<-as.numeric( length(flow_wet$Seq))
+flow_wet$Seq[max(ddddddddd)+1]
+#flow_dry$Seq<-if (flow_dry$Seq[max(ddddddddd)+1]< flow_dry$Seq[max(ddddddddd)]){ flow_dry$Seq[jj:JJJ]==max(CP_Flow_dry$cluster)+1}
+i=flow_wet$Seq[max(ddddddddd)+1]
+flow_wet$Seq[jj:JJJ]<- 
+  if(i < as.numeric(flow_wet$Seq[max(ddddddddd)])) {as.numeric(max(CP_Flow_wet$cluster)+1)} else{flow_wet$Seq}
+###view(flow_wet)
+flow_wet$Max_date<- as.Date.numeric(NA) 
+flow_wet$ECP<-as.character(NA) 
+flow_wet$Seq_p.value<-as.numeric (NA)
+flow_wet$MKLTP_p.value<-as.numeric (NA)
+max(flow_wet$Seq)
+#################
+#for (i in flow_wet$Seq){  
+# m<- assign(paste("segment_wet", i, sep = "_"),subset(flow_wet, Seq==i))}
+######################################
+Max_Seq_wet<-max(flow_wet$Seq)
+SSSSS<-plyr::ddply(flow_wet, plyr::.(Seq), function(m){
+  FD<-rkt(m$yearfraction,m$sum_flow)
+  b0<- median(m$sum_flow)-(FD$B* median(m$Year))
+  m$overall_slope<- b0+(FD$B*m$Year)
+  length(m$Year)
+  a3<-as.character(m$Year[1]) 
+  b3<-as.character(m$Year[length(m$Year)]) 
+  z3<-as.character(lapply(FD$B, round,2))
+  m$`Sens Slope`<- paste( (if (m$Seq==1){"b)"} else if (m$Seq==2){"c)"} else if (m$Seq==3){"d)"} else if (m$Seq==4){"e)"} else if  (m$Seq==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+  m$Max_date<- if (m$Seq< Max_Seq_wet){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+  m$ECP<- if (m$Seq< Max_Seq_wet){paste("ECP", m$Seq, sep = "")} else {as.character (NA)}
+  m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+  #############
+  myts_Wet <- ts(m$sum_flow, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+  MKLTP_Wet_Flow<- MannKendallLTP(myts_Wet)
+  m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Wet_Flow$Mann_Kendall_LTP[2], round,2),")", sep = "")
+  ############################
+  m$Mid_date<- min(m$date)
+  m$Mean<-as.numeric (mean(m$sum_flow))
+  m$MKLTP.Sig<- if (MKLTP_Wet_Flow$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Wet_Flow$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+  m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+  m$overll_line<-as.numeric (NA)
+  m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+  #################
+  print(m$ECP)
+  return(m)
+}
+)
+##view(SSSSS)
+###############################
+total_flow_wet <- rbind(flow_wet,SSSSS)
+###############
+tiff(paste0(" Annual_wet_trend_change point ",".tiff"),width=2000, height=1500, res = 350)
+Wet_flowtrend1<-ggplot(total_flow_wet, aes(x=date, color=`Sens Slope`))+
+  geom_point(aes(y=sum_flow, color=`Sens Slope`),size=1)+
+  ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  xlab("Date")+ylab("Wet Runoff (mm/yr)")
+Wet_flowtrend2<-Wet_flowtrend1+geom_line(aes(y=overll_line),size=0.8,
+                                         linetype= if(total_flow_wet$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+Wet_flowtrend3<-Wet_flowtrend2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+Wet_flowtrend4<-Wet_flowtrend3+geom_line(aes(y=mLine),size=0.8,
+                                         linetype= if(total_flow_wet$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})                                         
+
+#################
+for (i in total_flow_wet$Max_date){
+  Wet_flowtrend4<- Wet_flowtrend4+ 
+    geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+}
+
+Wet_flowtrend4<-Wet_flowtrend4+geom_text(mapping = aes(x = Max_date,
+                                                       y = max(sum_flow),
+                                                       label = ECP,
+                                                       hjust = 1.5,
+                                                       vjust = 1.5),
+                                         size=2.5,
+                                         angle=90,
+                                         show.legend = FALSE,
+                                         data = total_flow_wet)
+
+Wet_flowtrend4<-Wet_flowtrend4+geom_text(mapping = aes(x=Mid_date,
+                                                       y = max(sum_flow),
+                                                       fill=`Sens Slope`,
+                                                       label = Line.pvalue,
+                                                       hjust = 1,
+                                                       vjust = 3),
+                                         size=2.5,
+                                         angle=90,
+                                         show.legend = FALSE,
+                                         data = total_flow_wet)
+
+Wet_flowtrend4
+dev.off()
+
+####################
+################### A divisive hierarchical estimation algorithm for multiple change point analysis
+################### e.divisive ENERGY DIVISIVE for annuall data
+for(i in 1:5){
+  ED_Wet=e.divisive(X=Flow_Wet,sig.lvl=0.05,R=199,k=NULL,min.size=10,alpha=1)
+  if(ED_Wet$p.values[1]<=0.05) {
+    print("End of Loop") ;
+    break
+  } else{"KHHHH"}
+  
+}
+
+if (max(ED_Wet$cluster)<2){capture.output(print("No change point"), file = " EDP No Change point for wet season flow.txt")} else{
+  flow_ED_Wet<-flow_wet %>% dplyr::select(1:8)
+  flow_ED_Wet$Seq_ED<-as.numeric(ED_Wet$cluster) 
+  ########################################
+  ##view(flow_ED_Wet)
+  ################################################## MKLTP
+  flow_ED_Wet$MKLTP.Sig<-as.numeric (NA)
+  flow_ED_Wet$Mean<-as.numeric (NA)
+  flow_ED_Wet$Line<-as.numeric (NA)
+  flow_ED_Wet$overll_line<-as.numeric (flow_ED_Wet$overall_slope)
+  flow_ED_Wet$Line.pvalue<-as.character(NA)
+  flow_ED_Wet$mLine<- as.numeric (NA)
+  ########################
+  flow_ED_Wet$Max_date_ED<- as.Date.numeric(NA) 
+  flow_ED_Wet$EDP<-as.character(NA) 
+  flow_ED_Wet$p.value<-as.numeric (NA)
+  flow_ED_Wet$Seq_p.value<-as.numeric (NA)
+  flow_ED_Wet$MKLTP_p.value<-as.numeric (NA)
+  flow_ED_Wet$Mid_date_ED<-as.Date.numeric(NA)
+  ###################################
+  myts_Wet_ED<- ts(flow_ED_Wet$sum_flow, start=c(min(flow_ED_Wet$Year)), end=c(max(flow_ED_Wet$Year)), frequency=1)
+  MKLTP_Wet_Flow_ED<- MannKendallLTP(myts_Wet_ED)
+  flow_ED_Wet$MKLTP.Sig<- if (MKLTP_Wet_Flow_ED$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Wet_Flow_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  flow_ED_Wet$Line.pvalue<-if (flow_ED_Wet$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",flow_ED_Wet$MKLTP.Sig,")", sep = "")} else{NA}
+  flow_ED_Wet$Mid_date_ED<-min(flow_ED_Wet$date)
+  ############################
+  ###########################
+  max(flow_ED_Wet$Seq_ED)
+  max(length(flow_ED_Wet$Seq_ED))
+  ddddddddd<-as.numeric( which(ED_Wet$cluster == max(ED_Wet$cluster)))
+  flow_ED_Wet$Seq_ED[max(ddddddddd)+1]
+  jj<-max(ddddddddd)
+  JJJ<-as.numeric( length(flow_ED_Wet$Seq_ED))
+  flow_ED_Wet$Seq_ED[max(ddddddddd)+1]
+  #flow_ED_Wet_dry$Seq<-if (flow_ED_Wet_dry$Seq[max(ddddddddd)+1]< flow_ED_Wet_dry$Seq[max(ddddddddd)]){ flow_ED_Wet_dry$Seq[jj:JJJ]==max(CP_flow_ED_Wet_dry$cluster)+1}
+  i=flow_ED_Wet$Seq_ED[max(ddddddddd)+1]
+  #flow_ED_Wet$Seq_ED[jj:JJJ]<- 
+  # if(i < as.numeric(flow_ED_Wet$Seq_ED[max(ddddddddd)])) {as.numeric(max(ED_Wet$cluster)+1)} else{flow_ED_Wet$Seq_ED}
+  #################
+  #for (i in flow_ED_Wet$Seq){  
+  # m<- assign(paste("segment_", i, sep = "_"),subset(flow_ED_Wet, Seq==i))}
+  ######################################
+  Max_Seq_ED_Wet<-max(flow_ED_Wet$Seq_ED)
+  EDPP<-plyr::ddply(flow_ED_Wet, plyr::.(Seq_ED), function(m){
+    FD<-rkt(m$yearfraction,m$sum_flow)
+    b0<- median(m$sum_flow)-(FD$B* median(m$Year))
+    m$overall_slope<- b0+(FD$B*m$Year)
+    length(m$Year)
+    a3<-as.character(m$Year[1]) 
+    b3<-as.character(m$Year[length(m$Year)]) 
+    z3<-as.character(lapply(FD$B, round,2))
+    m$`Sens Slope`<- paste( (if (m$Seq_ED==1){"b)"} else if (m$Seq_ED==2){"c)"} else if (m$Seq_ED==3){"d)"} else if (m$Seq_ED==4){"e)"} else if  (m$Seq_ED==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+    m$Max_date_ED<- if (m$Seq_ED< Max_Seq_ED_Wet){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+    m$p.value<- ED_Wet$p.values[m$Seq_ED]
+    m$EDP<- if (m$Seq_ED< Max_Seq_ED_Wet){paste("EDP", m$Seq_ED," ","p","(",m$p.value,")", sep = "")} else {as.character (NA)}
+    m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+    ######
+    myts_Wet_ED <- ts(m$sum_flow, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+    MKLTP_Wet_Flow_ED<- MannKendallLTP(myts_Wet_ED)
+    m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Wet_Flow_ED$Mann_Kendall_LTP[2], round,2),")", sep = "")
+    ########################
+    m$Mid_date_ED<- min(m$date)
+    m$Mean<-as.numeric (mean(m$sum_flow))
+    m$MKLTP.Sig<- if (MKLTP_Wet_Flow_ED$Mann_Kendall_LTP[2]>0.01){
+      paste(lapply(MKLTP_Wet_Flow_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+    m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+    m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+    m$overll_line<-as.numeric (NA)
+    m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+    #################
+    return(m)
+  }
+  )
+  
+  #####################################################################################
+  total_flow_Wet_EDP <- rbind(flow_ED_Wet,EDPP)
+  ##view(flow_ED_Wet)
+  #view( total_flow_Wet_EDP)
+  tiff(paste0(" Wet_trend_EDP change point ",".tiff"),width=2000, height=1500, res = 350)
+  Wet_flowtrend_EDP1<-ggplot( total_flow_Wet_EDP, aes(x=date, color=`Sens Slope`))+
+    geom_point(aes(y=sum_flow, color=`Sens Slope`),size=1)+xlab("Date")+ylab("Wet Runoff (mm/yr)")+
+    ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+  Wet_flowtrend_EDP2<-Wet_flowtrend_EDP1+geom_line(aes(y=overll_line),size=0.8,
+                                                   linetype= if( total_flow_Wet_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+  Wet_flowtrend_EDP3<-Wet_flowtrend_EDP2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+  Wet_flowtrend_EDP4<-Wet_flowtrend_EDP3+ geom_line(aes(y=mLine),size=0.8,
+                                                    linetype= if( total_flow_Wet_EDP$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})                                         
+  
+  ##########
+  
+  for (i in  total_flow_Wet_EDP$Max_date_ED){
+    Wet_flowtrend_EDP4  <- Wet_flowtrend_EDP4+ 
+      geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+  }
+  
+  Wet_flowtrend_EDP4<-Wet_flowtrend_EDP4+geom_text(mapping = aes(x = Max_date_ED,
+                                                                 y = max(sum_flow),
+                                                                 label = EDP,
+                                                                 hjust = 1.5,
+                                                                 vjust = 1.5),
+                                                   size=3,
+                                                   angle=90,
+                                                   show.legend = FALSE,
+                                                   data =  total_flow_Wet_EDP)
+  
+  Wet_flowtrend_EDP4<-Wet_flowtrend_EDP4+geom_text(mapping = aes(x = Mid_date_ED,
+                                                                 y = max(sum_flow),
+                                                                 label = Line.pvalue,
+                                                                 hjust = 1,
+                                                                 vjust = 5.5), 
+                                                   size=2.5,  
+                                                   angle=90,
+                                                   show.legend = FALSE,
+                                                   data =  total_flow_Wet_EDP)
+  Wet_flowtrend_EDP4
+  
+}# end of if
+dev.off()
+############################
+################################## orginal mann-kendal test
+########## change point for wet and dry season ANNUALY   
+Flow_dryseason
+ts_dry <- xts(Flow_dryseason$sum_flow, as.Date(Flow_dryseason$date, "%Y-%m-%d"))
+# convert daily data
+ts_dry_y = apply.yearly(ts_dry, sum)
+ts_y_d= data.frame(sum_flow=coredata(ts_dry_y),date=index(ts_dry_y))
+
+flow_dry<- data.frame(date = ts_y_d$date,
+                      Year = as.numeric(format(ts_y_d$date, format = "%Y")),
+                      Month = as.numeric(format(ts_y_d$date, format = "%m")),
+                      Day = as.numeric(format(ts_y_d$date, format = "%d")))
+flow_dry$sum_flow<-ts_y_d$sum_flow
+flow_dry$yearfraction<-(flow_dry$Year+0.110)
+##view(flow_dry)
+#####################################
+#####################################ECP change point wet season
+Flow_dry<-flow_dry %>% dplyr::select(5)
+Flow_dry<- as.matrix(Flow_dry)
+x4= rep(c(min(flow_dry$Year):max(flow_dry$Year)), times= c(1))
+##################################### mem
+n3=length(flow_dry$date)
+num=1
+mem3 <- vector()
+
+while (n3>10) {
+  
+  x= rep(c(num), times= c(10))
+  
+  n3=n3-10
+  
+  num=num+1
+  
+  mem3 <- append(mem3, x)
+  
+}
+
+x= rep(c(num), times= c(n3))
+
+mem3 <- append(mem3, x)
+
+print(mem3)
+
+#### mem= rep=shows possible number
+CP_Flow_dry= e.agglo(Flow_dry,member=mem3,alpha=2,penalty=function(cp,Xts) 0)
+CP_Flow_dry$estimates
+CP_Flow_dry$cluster
+par(mfrow=c(1,1))
+tiff(paste0(" ECP change point for annual dry Flow ",".tiff"),width=1500, height=1000, res = 300)
+CP_Flow_dry$progression
+#plot(CP_Flow_dry$cluster)
+plot(x4, CP_Flow_dry$cluster,
+     main="ECP test annual dry Flow",
+     xlab = "Year",
+     ylab="cluster",
+     type="p",
+     col="blue")
+dev.off()
+########################################## orginal MK test for Dry Flow
+flow_dry
+TR_dry_flow<-rkt(flow_dry$yearfraction,flow_dry$sum_flow)
+print(TR_dry_flow)
+capture.output(summary(print(TR_dry_flow)), file = " Flow_annual_dry MK test results.txt")
+TR_dry_flow$B
+b0<- median(flow_dry$sum_flow)-(TR_dry_flow$B * median(flow_dry$Year))
+flow_dry$overall_slope<- b0+(TR_dry_flow$B * flow_dry$Year)
+length(flow_dry$Year)
+a5<-as.character(flow_dry$Year[1]) 
+b5<-as.character(flow_dry$Year[length(flow_dry$Year)]) 
+z5<-as.character(lapply(TR_dry_flow$B, round,2))
+flow_dry$`Sens Slope`<- paste("a)",a5,"-",b5,":"," ",z5," ","mm/yr",sep='')
+##################################################
+################################################## MKLTP
+flow_dry$MKLTP.Sig<-as.numeric (NA)
+flow_dry$Mean<-as.numeric (NA)
+flow_dry$Line<-as.numeric (NA)
+flow_dry$overll_line<-as.numeric (flow_dry$overall_slope)
+flow_dry$Line.pvalue<-as.character(NA)
+flow_dry$Mid_date<-as.Date.numeric(NA)
+flow_dry$mLine<- as.numeric(NA)
+######################################
+myts_Dry<- ts(flow_dry$sum_flow, start=c(min(flow_dry$Year)), end=c(max(flow_dry$Year)), frequency=1)
+MKLTP_Dry_Flow<- MannKendallLTP(myts_Dry)
+flow_dry$MKLTP.Sig<- if (MKLTP_Dry_Flow$Mann_Kendall_LTP[2]>0.01){
+  paste(lapply(MKLTP_Dry_Flow$Mann_Kendall_LTP[2], round,2))} else {0.001}
+flow_dry$Line.pvalue<-if (flow_dry$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",flow_dry$MKLTP.Sig,")", sep = "")} else{NA}
+flow_dry$Mid_date<-min(flow_dry$date)
+############################
+flow_dry$Seq<-as.numeric(CP_Flow_dry$cluster)
+ddddddddd<-as.numeric( which(CP_Flow_dry$cluster == max(CP_Flow_dry$cluster)))
+flow_dry$Seq[max(ddddddddd)+1]
+jj<-max(ddddddddd)
+JJJ<-as.numeric( length(flow_dry$Seq))
+flow_dry$Seq[max(ddddddddd)+1]
+i=flow_dry$Seq[max(ddddddddd)+1]
+flow_dry$Seq[jj:JJJ]<- 
+  if(i < as.numeric(flow_dry$Seq[max(ddddddddd)])) {as.numeric(max(CP_Flow_dry$cluster)+1)} else{flow_dry$Seq}
+##########################################
+flow_dry$Max_date<- as.Date.numeric(NA) 
+flow_dry$ECP<-as.character(NA)
+flow_dry$Seq_p.value<-as.numeric (NA)
+flow_dry$MKLTP_p.value<-as.numeric (NA)
+#################
+
+#for (i in flow_dry$Seq){  
+# m<- assign(paste("segment_wet", i, sep = "_"),subset(flow_dry, Seq==i))}
+
+######################################
+Max_Seq_dry<-max(flow_dry$Seq)
+VVVVV<-plyr::ddply(flow_dry, plyr::.(Seq), function(m){
+  FD<-rkt(m$yearfraction,m$sum_flow)
+  b0<- median(m$sum_flow)-(FD$B* median(m$Year))
+  m$overall_slope<- b0+(FD$B*m$Year)
+  a6<-as.character(m$Year[1]) 
+  b6<-as.character(m$Year[length(m$Year)]) 
+  z6<-as.character(lapply(FD$B, round,2))
+  m$`Sens Slope`<- paste( (if (m$Seq==1){"b)"} else if (m$Seq==2){"c)"} else if (m$Seq==3){"d)"} else if (m$Seq==4){"e)"} else if  (m$Seq==5){"f)"} else {"g)"}) ,a6,"-",b6,":"," ",z6," ","mm/yr",sep='')
+  m$Max_date<- if (m$Seq< Max_Seq_dry){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+  m$ECP<- if (m$Seq< Max_Seq_dry){paste("ECP", m$Seq, sep = "")} else {as.character (NA)}
+  m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+  ######
+  myts_Dry <- ts(m$sum_flow, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+  MKLTP_Dry_Flow<- MannKendallLTP(myts_Dry)
+  m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Dry_Flow$Mann_Kendall_LTP[2], round,2),")", sep = "")
+  ############################
+  m$Mid_date<- min(m$date)
+  m$Mean<-as.numeric (mean(m$sum_flow))
+  m$MKLTP.Sig<- if (MKLTP_Dry_Flow$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Dry_Flow$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+  m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+  m$overll_line<-as.numeric (NA)
+  m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+  #################
+  
+  print(m$ECP)
+  return(m)
+}
+)
+
+###view(VVVVV)
+#####################################
+total_flow_dry <- rbind(flow_dry,VVVVV)
+####view(total_flow_dry)
+tiff(paste0(" Annual_dry_trend_change point ",".tiff"),width=2000, height=1500, res = 350)
+Dry_flowtrend1<-ggplot(total_flow_dry, aes(x=date, color=`Sens Slope`))+
+  geom_point(aes(y=sum_flow, color=`Sens Slope`),size=1)+xlab("Date")+ylab("Dry Runoff (mm/yr)")+
+  ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+
+Dry_flowtrend2<-Dry_flowtrend1+ geom_line(aes(y=overll_line),size=0.8,
+                                          linetype= if(total_flow_dry$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+Dry_flowtrend3<-Dry_flowtrend2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+Dry_flowtrend4<-Dry_flowtrend3+geom_line(aes(y=mLine),size=0.8,
+                                         linetype= if(total_flow_dry$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})
+######################
+for (i in total_flow_dry$Max_date){
+  Dry_flowtrend4  <- Dry_flowtrend4+ 
+    geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+}
+
+Dry_flowtrend4<-Dry_flowtrend4+geom_text(mapping = aes(x = Max_date,
+                                                       y = max(sum_flow),
+                                                       label = ECP,
+                                                       hjust = 1.5,
+                                                       vjust = 1.5),
+                                         size=2.5,
+                                         angle=90,
+                                         show.legend = FALSE,
+                                         data = total_flow_dry)
+Dry_flowtrend4<- Dry_flowtrend4+geom_text(mapping = aes(x = Mid_date,
+                                                        y = max(sum_flow),
+                                                        fill=`Sens Slope`,
+                                                        label = Line.pvalue,
+                                                        hjust = 1,
+                                                        vjust = 5.5),
+                                          size=2.5,
+                                          angle=90,
+                                          show.legend = FALSE,
+                                          data = total_flow_dry)
+
+
+Dry_flowtrend4
+
+dev.off()
+
+######################################################################################
+################### A divisive hierarchical estimation algorithm for multiple change point analysis
+################### e.divisive ENERGY DIVISIVE for annuall data
+Flow_dry
+for(i in 1:15){
+  ED_Dry=e.divisive(X=Flow_dry,sig.lvl=0.05,R=199,k=NULL,min.size=10,alpha=1)
+  if(ED_Dry$p.values[1]<=0.05) {
+    print("End of Loop") ;
+    break
+  } else{"KHHHH"}
+  
+}
+###view(flow_dry)
+if (max(ED_Dry$cluster)<2){capture.output(print("No change point"), file = " EDP No Change point for Dry season flow.txt")} else{
+  flow_ED_Dry<-flow_dry %>% dplyr::select(1:8)
+  flow_ED_Dry$Seq_ED<-as.numeric(ED_Dry$cluster) 
+  ################################################
+  ################################################## MKLTP
+  flow_ED_Dry$MKLTP.Sig<-as.numeric (NA)
+  flow_ED_Dry$Mean<-as.numeric (NA)
+  flow_ED_Dry$Line<-as.numeric (NA)
+  flow_ED_Dry$overll_line<-as.numeric (flow_ED_Dry$overall_slope)
+  flow_ED_Dry$Line.pvalue<-as.character(NA)
+  flow_ED_Dry$mLine<- as.numeric(NA)
+  #####################################################
+  flow_ED_Dry$Max_date_ED<- as.Date.numeric(NA) 
+  flow_ED_Dry$EDP<-as.character(NA) 
+  flow_ED_Dry$p.value<-as.numeric (NA)
+  flow_ED_Dry$Seq_p.value<-as.numeric (NA)
+  flow_ED_Dry$MKLTP_p.value<-as.numeric (NA)
+  flow_ED_Dry$Mid_date_ED<-as.Date.numeric(NA)
+  ##################################################
+  ######################################
+  myts_Dry_ED<- ts(flow_ED_Dry$sum_flow, start=c(min(flow_ED_Dry$Year)), end=c(max(flow_ED_Dry$Year)), frequency=1)
+  MKLTP_Dry_Flow_ED<- MannKendallLTP(myts_Dry_ED)
+  flow_ED_Dry$MKLTP.Sig<- if (MKLTP_Dry_Flow_ED$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Dry_Flow_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  flow_ED_Dry$Line.pvalue<-if (flow_ED_Dry$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",flow_ED_Dry$MKLTP.Sig,")", sep = "")} else{NA}
+  flow_ED_Dry$Mid_date_ED<-min(flow_ED_Dry$date)
+  ############################
+  ddddddddd<-as.numeric( which(ED_Dry$cluster == max(ED_Dry$cluster)))
+  flow_ED_Dry$Seq_ED[max(ddddddddd)+1]
+  jj<-max(ddddddddd)
+  JJJ<-as.numeric( length(flow_ED_Dry$Seq_ED))
+  flow_ED_Dry$Seq_ED[max(ddddddddd)+1]
+  i=flow_ED_Dry$Seq_ED[max(ddddddddd)+1]
+  #################
+  
+  #for (i in flow_ED_Dry$Seq){  
+  # m<- assign(paste("segment_", i, sep = "_"),subset(flow_ED_Dry, Seq==i))}
+  
+  ######################################
+  Max_Seq_ED_Dry<-max(flow_ED_Dry$Seq_ED)
+  EDPP<-plyr::ddply(flow_ED_Dry, plyr::.(Seq_ED), function(m){
+    FD<-rkt(m$yearfraction,m$sum_flow)
+    b0<- median(m$sum_flow)-(FD$B* median(m$Year))
+    m$overall_slope<- b0+(FD$B*m$Year)
+    length(m$Year)
+    a3<-as.character(m$Year[1]) 
+    b3<-as.character(m$Year[length(m$Year)]) 
+    z3<-as.character(lapply(FD$B, round,2))
+    m$`Sens Slope`<- paste( (if (m$Seq_ED==1){"b)"} else if (m$Seq_ED==2){"c)"} else if (m$Seq_ED==3){"d)"} else if (m$Seq_ED==4){"e)"} else if  (m$Seq_ED==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+    m$Max_date_ED<- if (m$Seq_ED< Max_Seq_ED_Dry){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+    m$p.value<- ED_Dry$p.values[m$Seq_ED]
+    m$EDP<- if (m$Seq_ED< Max_Seq_ED_Dry){paste("EDP", m$Seq_ED," ","p","(",m$p.value,")", sep = "")} else {as.character (NA)}
+    m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+    ################
+    myts_Dry_ED <- ts(m$sum_flow, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+    MKLTP_Dry_Flow_ED<- MannKendallLTP(myts_Dry_ED)
+    m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Dry_Flow_ED$Mann_Kendall_LTP[2], round,2),")", sep = "")
+    ########################
+    m$Mid_date_ED<- min(m$date)
+    m$Mean<-as.numeric (mean(m$sum_flow))
+    m$MKLTP.Sig<- if (MKLTP_Dry_Flow_ED$Mann_Kendall_LTP[2]>0.01){
+      paste(lapply(MKLTP_Dry_Flow_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+    m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+    m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+    m$overll_line<-as.numeric (NA)
+    m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+    #################
+    return(m)
+  }
+  )
+  #####################################################################################
+  total_flow_Dry_EDP <- rbind(flow_ED_Dry,EDPP)
+  ##view(flow_ED_Dry)
+  tiff(paste0(" Dry_trend_EDP change point ",".tiff"),width=2000, height=1500, res = 350)
+  Dry_flowtrend_EDP1<-ggplot(total_flow_Dry_EDP, aes(x=date, color=`Sens Slope`))+
+    geom_point(aes(y=sum_flow, color=`Sens Slope`),size=1)+xlab("Date")+ylab("Dry Runoff (mm/yr)")+
+    ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+  Dry_flowtrend_EDP2<-Dry_flowtrend_EDP1+geom_line(aes(y=overll_line),size=0.8,
+                                                   linetype= if(total_flow_Dry_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} ) 
+  Dry_flowtrend_EDP3<-Dry_flowtrend_EDP2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+  Dry_flowtrend_EDP4<-Dry_flowtrend_EDP3+geom_line(aes(y=mLine),size=0.8,
+                                                   linetype= if(total_flow_Dry_EDP$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})
+  #################################
+  for (i in total_flow_Dry_EDP$Max_date_ED){
+    Dry_flowtrend_EDP4  <- Dry_flowtrend_EDP4+ 
+      geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+  }
+  
+  Dry_flowtrend_EDP4<-Dry_flowtrend_EDP4+geom_text(mapping = aes(x = Max_date_ED,
+                                                                 y = max(sum_flow),
+                                                                 label = EDP,
+                                                                 hjust = 1.5,
+                                                                 vjust = 1.5),
+                                                   size=3,
+                                                   angle=90,
+                                                   show.legend = FALSE,
+                                                   data = total_flow_Dry_EDP)
+  
+  Dry_flowtrend_EDP4<-Dry_flowtrend_EDP4+geom_text(mapping = aes(x = Mid_date_ED,
+                                                                 y = max(sum_flow),
+                                                                 fill=`Sens Slope`,
+                                                                 label = Line.pvalue,
+                                                                 hjust = 1,
+                                                                 vjust = 5.5),
+                                                   size=2.5,
+                                                   angle=90,
+                                                   show.legend = FALSE,
+                                                   data = total_flow_Dry_EDP)
+  Dry_flowtrend_EDP4
+  
+}# end of if
+dev.off()
+
+##################################### Ratio of DRY/Wet
+flow_dry
+flow_wet
+RDW<- flow_wet$sum_flow
+RDW<- as.data.frame(RDW)
+RDW$Dry<- flow_dry$sum_flow
+RDW$Wet<-RDW$RDW
+RDW$divided<-RDW$Dry/RDW$Wet
+RDW$Comulative<- cumsum(RDW$divided)
+RDW$Percent<- RDW$divided*100
+RDW$Year<-flow_wet$date  
+###view(RDW)
+RDW1<-ggplot(RDW)+geom_line(aes(x=Year,y=Percent),color="blue")+ xlab("Date")+ylab("Dry/Wet (%)")+
+  geom_smooth(aes(x=Year,y=Percent), color="red")
+RDW2<-RDW1+theme_bw()
+RDW2
+###################################
+##################################### multiple graph
+tiff(paste0(" Annual_wet_dry season trend ",".tiff"),width=2000, height=2500, res = 350)
+f<-ggarrange(annual_flowtrend4,Dry_flowtrend4,Wet_flowtrend4, nrow =3, ncol =1, heights = c(10, 10,10),
+             widths =c(0.5) )
+dev.off()
+#######################################
+#######################################
+#######################################   Baseflow analysis
+Pin <- Flow
+str(Pin)
+colnames(Pin) <- c("Date", "Q")
+####### Baseflow based on a=0.975
+Summary<-baseflows(Pin,a=0.975, ts="mean")
+B_annuall<- baseflows(Pin,a=0.975, ts="annual")
+Daily<- baseflows(Pin,a=0.975, ts="daily")
+Daily$quickflow<-  Daily$Q - Daily$bf
+write.csv(Daily,file = "baseflow.csv")
+###########################
+baseflow <- Daily
+#view(baseflow)
+baseflow<-baseflow%>% dplyr::select(1,3)
+str(baseflow)
+Baseflow<- na.omit(baseflow) 
+################################
+################## avarage flow based on month of each year
+ts_baseflow <- xts(Baseflow$bf, as.Date(Baseflow$Date, "%Y-%m-%d"))
+# convert daily data to annual and monthly
+ts_m_baseflow = apply.monthly(ts_baseflow, sum)
+ts_y_baseflow = apply.yearly(ts_baseflow, sum)
+##ts_q = apply.quarterly(ts, sum)
+str(ts_m_baseflow)
+ts_m_bf=data.frame(sum_baseflow=coredata(ts_m_baseflow),date=index(ts_m_baseflow))
+ts_y_bf=data.frame(sum_baseflow=coredata(ts_y_baseflow),date=index(ts_y_baseflow))
+Baseflow_monthly= ts_m_bf %>% 
+  mutate(date = ymd(date)) %>% 
+  mutate_at(vars(date), funs(year, month, day))
+Baseflow_yearly= ts_y_bf %>% 
+  mutate(date = ymd(date)) %>% 
+  mutate_at(vars(date), funs(year, month, day))
+colnames(Baseflow_monthly) <- c("sum_baseflow","date","Year","Month","Day")
+colnames(Baseflow_yearly) <- c("sum_baseflow","date","Year","Month","Day")
+##view(Baseflow_monthly)
+#####str(Flow_monthly)
+############################### hydrological year
+Baseflow_season<-Baseflow_monthly
+Baseflow_monthly$hyear<- ifelse(Baseflow_monthly$Month>=5,Baseflow_monthly$Year,Baseflow_monthly$Year-1)
+################################ SMK test for baseflow
+Tr_baseflow<-rkt(Baseflow_monthly$hyear,Baseflow_monthly$sum_baseflow,Baseflow_monthly$Month,,TRUE)
+print(Tr_baseflow)
+capture.output(summary(print(Tr_baseflow)), file = " Baseflow SMK test results.txt")
+###### Rainfall for partial SMK Test
+Rainfall <- read_excel("Rainfall.xlsx", col_types = c("numeric", 
+                                                      "numeric", "numeric"))
+####################  partial SMK TEST FLOW
+Tr_partial_baseflow<-rkt(Baseflow_monthly$Year,Baseflow_monthly$sum_baseflow,Baseflow_monthly$Month,Rainfall$PRCP,TRUE)
+print(Tr_partial_baseflow)
+capture.output(summary(print(Tr_partial_baseflow)), file = " Baseflow Partial SMK test results.txt")
+
+#########################lanzante.test monthly test 
+Baseflow_TS <-ts(Baseflow_monthly[, 1], start = c(Baseflow_monthly$Year[1], Baseflow_monthly$Month[1]),
+                 end=c(Baseflow_monthly$Year[length(Baseflow_monthly$Year)],Baseflow_monthly$Month[length(Baseflow_monthly$Month)]), frequency = 12)
+
+tiff(paste0("Baseflow_monthly_lanzante_test ",".tiff"),width=1500, height=1000, res = 300)
+plot(Baseflow_TS)
+s.res <- lanzante.test(Baseflow_TS)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean(Baseflow_TS[1:i])
+s.2 <- mean(Baseflow_TS[(i+1):n])
+s <- ts(c(rep(s.1,i), rep(s.2,(n-i))))
+tsp(s) <- tsp(Baseflow_TS)
+lines(s, col=2,lty=1)
+print(s.res)
+dev.off()
+################## CDFM
+Mean_baseflow<- mean(Baseflow_monthly$sum_baseflow)
+Baseflow_monthly$Pi=((Baseflow_monthly$sum_baseflow-Mean_baseflow)/12)
+Baseflow_monthly$CDFM<- cumsum(Baseflow_monthly$Pi) # replace the cell freq.s by cumulative freq.s
+#################################################################################
+######### Plotting CDFM
+lims<- c(min= as.Date(min(Baseflow_monthly$date)), max= as.Date(max(Baseflow_monthly$date)))
+Time_Baseflow1<-ggplot(Baseflow_monthly)+geom_line( aes(x=date, y=sum_baseflow),color= "black")
+Time_Baseflow2<-Time_Baseflow1+geom_line(aes(x=date, y=CDFM),alpha = 0.6, size = 0.7,color= "blue")
+Time_Baseflow3<-Time_Baseflow2+geom_smooth(aes(x=date, y=CDFM),color="red")+xlab("Date")+ylab("Monthly Baseflow (mm)")
+Time_Baseflow4<-Time_Baseflow3+scale_y_continuous(sec.axis = sec_axis(name ="CDFM (mm)",~ . + 0))
+Time_Baseflow5<- Time_Baseflow4 
+Time_Baseflow5
+dev.off()
+#########################################
+#################################### monthly basflow
+s.res <- lanzante.test( Baseflow_monthly$sum_baseflow)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( Baseflow_monthly$sum_baseflow[1:i])
+s.2 <- mean( Baseflow_monthly$sum_baseflow[(i+1):n])
+sm<- ts(c(rep(s.1,i), rep(s.2,(n-i))))
+sm<-as.data.frame(as.numeric(sm))
+Baseflow_monthly$sm<-sm$`as.numeric(sm)`
+p_value <- s.res$p.value
+hh<- if(p_value > 0.05){print("LAT (p>0.05)")} else if(p_value > 0.01 & p_value < 0.05){print("LAT (p<0.05)")} else{print("LAT (p<0.01)")}
+my_text <- hh
+my_grob = grid.text(my_text, x=0.68,  y=0.9, gp=gpar(col="black", fontsize=7, fontface="bold"))
+year3=Baseflow_monthly[i,2]
+
+Time_Baseflow10<-Time_Baseflow5+geom_line(aes(x=date,y=Baseflow_monthly$sm),colour="black")
+Time_Baseflow11<-Time_Baseflow10+ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+ 
+  geom_vline(aes(xintercept = year3),size = 0.7,color= "black",linetype="dashed")+
+  annotation_custom(my_grob, xmin = as.Date(max(year3,100)), xmax = as.Date(max(year3,100)), ymin =max(Baseflow_monthly$sum_baseflow), ymax = max(Baseflow_monthly$sum_baseflow))
+Time_Baseflow11
+###################################
+################################### ECP
+#### ENERGY AGGLOMERATIVE
+Baseflow_annuall<-Baseflow_yearly %>% dplyr::select(1)
+Baseflow_annuall<- as.matrix(Baseflow_annuall)
+x5= rep(c(min(Baseflow_yearly$Year):max(Baseflow_yearly$Year)), times= c(1))
+##################################### member function
+n=length(Baseflow_yearly$date)
+num=1
+mem <- vector()
+
+while (n>10) {
+  
+  x= rep(c(num), times= c(10))
+  
+  n=n-10
+  
+  num=num+1
+  
+  mem <- append(mem, x)
+  
+}
+
+x= rep(c(num), times= c(n))
+
+mem <- append(mem, x)
+
+print(mem)
+
+##################  e.agglo CHANGE POINT DETECTION (ecp) TEST
+CP_Baseflow= e.agglo(Baseflow_annuall,member=mem,alpha=2,penalty=function(cp,Xts) 0)
+par(mfrow=c(1,1))
+tiff(paste0(" ECP change point for annuall Baseflow ",".tiff"),width=1500, height=1000, res = 300)
+CP_Baseflow$progression
+plot(x5,CP_Baseflow$cluster,
+     main="ECP test annual Baseflow",
+     xlab = "Year",
+     ylab="cluster",
+     type="p",
+     col="blue")
+dev.off()
+###############################
+####################### Orginal MK test for annual data of baseflow
+##view(Baseflow_yearly)
+annuall_baseflow<-Baseflow_yearly
+annuall_baseflow$yearfraction<-(annuall_baseflow$Year+0.110)
+TR_annual_baseflow<-rkt(annuall_baseflow$yearfraction,annuall_baseflow$sum_baseflow)
+print(TR_annual_baseflow)
+capture.output(summary(print(TR_annual_baseflow)), file = " Annual Baseflow MK test results.txt")
+TR_annual_baseflow$sl
+TR_annual_baseflow$B
+b0<- median(annuall_baseflow$sum_baseflow)-(TR_annual_baseflow$B * median(annuall_baseflow$Year))
+annuall_baseflow$overall_slope<- b0+(TR_annual_baseflow$B * annuall_baseflow$Year)
+a1<-as.character(annuall_baseflow$Year[1]) 
+b1<-as.character(annuall_baseflow$Year[length(annuall_baseflow$Year)]) 
+z1<-as.character(lapply(TR_annual_baseflow$B, round,2))
+annuall_baseflow$`Sens Slope`<- paste("a)",a1,"-",b1,":"," ",z1," ","mm/yr",sep='')
+################################################## MKLTP tEST FOR ANNUALL annuall_baseflow
+annuall_baseflow$MKLTP.Sig<-as.numeric (NA)
+annuall_baseflow$Mean<-as.numeric (NA)
+annuall_baseflow$Line<-as.numeric (NA)
+annuall_baseflow$overll_line<-as.numeric (annuall_baseflow$overall_slope)
+annuall_baseflow$Line.pvalue<-as.character(NA)
+annuall_baseflow$Mid_date<-as.Date.numeric(NA)
+annuall_baseflow$mLine<- as.numeric(NA)
+######################################
+annuall_baseflow$Max_date<- as.Date.numeric(NA) 
+annuall_baseflow$ECP<-as.character(NA) 
+annuall_baseflow$Seq_p.value<-as.numeric (NA)
+annuall_baseflow$MKLTP_p.value<-as.numeric (NA)
+#######################################
+myts_Annuall<- ts(annuall_baseflow$sum_baseflow, start=c(min(annuall_baseflow$Year)), end=c(max(annuall_baseflow$Year)), frequency=1)
+MKLTP_Annuall_Baseflow<- MannKendallLTP(myts_Annuall)
+annuall_baseflow$MKLTP.Sig<- if (MKLTP_Annuall_Baseflow$Mann_Kendall_LTP[2]>0.01){
+  paste(lapply(MKLTP_Annuall_Baseflow$Mann_Kendall_LTP[2], round,2))} else {0.001}
+annuall_baseflow$Line.pvalue<-if (annuall_baseflow$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",annuall_baseflow$MKLTP.Sig,")", sep = "")} else{NA}
+annuall_baseflow$Mid_date<-min(annuall_baseflow$date)
+############################
+annuall_baseflow$Seq<-as.numeric(CP_Baseflow$cluster) 
+ddddddddd<-as.numeric( which(CP_Baseflow$cluster == max(CP_Baseflow$cluster)))
+annuall_baseflow$Seq[max(ddddddddd)+1]
+jj<-max(ddddddddd)
+JJJ<-as.numeric( length(annuall_baseflow$Seq))
+annuall_baseflow$Seq[max(ddddddddd)+1]
+i=annuall_baseflow$Seq[max(ddddddddd)+1]
+annuall_baseflow$Seq[jj:JJJ]<- 
+  if(i < as.numeric(annuall_baseflow$Seq[max(ddddddddd)])) {as.numeric(max(CP_Baseflow$cluster)+1)} else{annuall_baseflow$Seq}
+
+################# SUBSET THE DATA BASED ON ecp
+#for (i in annuall_baseflow$Seq){  
+# m<- assign(paste("segment_", i, sep = "_"),subset(annuall_baseflow, Seq==i))}
+######################################
+Max_Seq_annuall<-max(annuall_baseflow$Seq)
+NNNNN<-plyr::ddply(annuall_baseflow, plyr::.(Seq), function(m){
+  FD<-rkt(m$yearfraction,m$sum_baseflow )
+  capture.output(summary(print(FD)), file = " annuall_baseflow MK test results for segments.txt")
+  b0<- median(m$sum_baseflow )-(FD$B* median(m$Year))
+  m$overall_slope<- b0+(FD$B*m$Year)
+  a3<-as.character(m$Year[1]) 
+  b3<-as.character(m$Year[length(m$Year)]) 
+  z3<-as.character(lapply(FD$B, round,2))
+  m$`Sens Slope`<- paste( (if (m$Seq==1){"b)"} else if (m$Seq==2){"c)"} else if (m$Seq==3){"d)"} else if (m$Seq==4){"e)"} else if  (m$Seq==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+  m$Max_date<- if (m$Seq< Max_Seq_annuall){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+  m$ECP<- if (m$Seq< Max_Seq_annuall){paste("ECP", m$Seq, sep = "")} else {as.character (NA)}
+  m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+  ###################################
+  myts_Annuall<- ts(m$sum_baseflow , start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+  MKLTP_Annuall_Baseflow<- MannKendallLTP(myts_Annuall)
+  m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Annuall_Baseflow$Mann_Kendall_LTP[2], round,2),")", sep = "")
+  #########################
+  m$Mid_date<- min(m$date)
+  m$Mean<-as.numeric (mean(m$sum_baseflow ))
+  m$MKLTP.Sig<- if (MKLTP_Annuall_Baseflow$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Annuall_Baseflow$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+  m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+  m$overll_line<-as.numeric (NA)
+  m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+  ########
+  return(m)
+}
+)
+##view(NNNNN)
+#####################################################################################
+total_baseflow_annuall <- rbind(annuall_baseflow,NNNNN)
+###view(total_baseflow_annuall)
+tiff(paste0(" Annual baseflow_trend_change point ",".tiff"),width=2000, height=1500, res = 350)
+annualbaseflowtrend1<-ggplot(total_baseflow_annuall, aes(x=date, color=`Sens Slope`))+
+  geom_point(aes( y=sum_baseflow),size=1)+
+  ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  xlab("Date")+ylab("Annual Baseflow (mm/yr)")
+
+annualbaseflowtrend2<-annualbaseflowtrend1+geom_line(aes(y=overll_line),size=0.8,
+                                                     linetype= if(total_baseflow_annuall$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+
+annualbaseflowtrend2<-annualbaseflowtrend2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+
+annualbaseflowtrend3<-annualbaseflowtrend2+geom_line(aes(y=mLine),size=0.8,
+                                                     linetype= if(total_baseflow_annuall$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})
+################################
+for (i in total_baseflow_annuall$Max_date){
+  annualbaseflowtrend3  <- annualbaseflowtrend3+ 
+    geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+}
+
+annualbaseflowtrend4<-annualbaseflowtrend3+geom_text(mapping = aes(x = Max_date,
+                                                                   y = max(sum_baseflow),
+                                                                   label = ECP,
+                                                                   hjust = 1.5,
+                                                                   vjust = 1.5),
+                                                     size=3,
+                                                     angle=90,
+                                                     show.legend = FALSE,
+                                                     data = total_baseflow_annuall)
+
+annualbaseflowtrend4<- annualbaseflowtrend4+geom_text(mapping = aes(x = Mid_date,
+                                                                    y = max(sum_baseflow),
+                                                                    fill=`Sens Slope`,
+                                                                    label = Line.pvalue,
+                                                                    hjust =1,
+                                                                    vjust = 5.5),
+                                                      size=2.5,
+                                                      angle=90,
+                                                      show.legend = FALSE,
+                                                      data = total_baseflow_annuall)
+annualbaseflowtrend4
+dev.off()
+#####################
+#################### A divisive hierarchical estimation algorithm for multiple change point analysis
+################### e.divisive ENERGY DIVISIVE for annuall data
+for(i in 1:5){
+  ED_Annuall_baseflow=e.divisive(X=Baseflow_annuall,sig.lvl=0.05,R=199,k=NULL,min.size=10,alpha=1)
+  if(ED_Annuall_baseflow$p.values[1]<=0.05) {
+    print("End of Loop") ;
+    break
+  } else{"KHHHH"}
+  
+}
+#######################
+annuall_baseflow
+if (max(ED_Annuall_baseflow$cluster)<2){capture.output(print("No change point"), file = " EDP No Change point for annuall baseflow.txt")} else{
+  annuall_baseflow_ED<-annuall_baseflow %>% dplyr::select(1:8)
+  annuall_baseflow_ED$Seq_ED<-as.numeric(ED_Annuall_baseflow$cluster)
+  ####################
+  #################### MKLTP
+  annuall_baseflow_ED$MKLTP.Sig<-as.numeric (NA)
+  annuall_baseflow_ED$Mean<-as.numeric (NA)
+  annuall_baseflow_ED$Line<-as.numeric (NA)
+  annuall_baseflow_ED$overll_line<-as.numeric (annuall_baseflow_ED$overall_slope)
+  annuall_baseflow_ED$Line.pvalue<-as.character(NA)
+  annuall_baseflow_ED$mLine<- as.numeric(NA)
+  #####################################
+  annuall_baseflow_ED$Max_date_ED<- as.Date.numeric(NA) 
+  annuall_baseflow_ED$EDP<-as.character(NA) 
+  annuall_baseflow_ED$p.value<-as.numeric (NA)
+  annuall_baseflow_ED$Seq_p.value<-as.numeric (NA)
+  annuall_baseflow_ED$MKLTP_p.value<-as.numeric (NA)
+  annuall_baseflow_ED$Mid_date_ED<-as.Date.numeric(NA)
+  #####################################
+  myts_Annuall_ED<- ts(annuall_baseflow_ED$sum_baseflow, start=c(min(annuall_baseflow_ED$Year)), end=c(max(annuall_baseflow_ED$Year)), frequency=1)
+  MKLTP_Annuall_Baseflow_ED<- MannKendallLTP(myts_Annuall_ED)
+  annuall_baseflow_ED$MKLTP.Sig<- if (MKLTP_Annuall_Baseflow_ED$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Annuall_Baseflow_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  annuall_baseflow_ED$Line.pvalue<-if (annuall_baseflow_ED$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",annuall_baseflow_ED$MKLTP.Sig,")", sep = "")} else{NA}
+  annuall_baseflow_ED$Mid_date_ED<-min(annuall_baseflow_ED$date)
+  ####
+  ddddddddd<-as.numeric( which(ED_Annuall_baseflow$cluster == max(ED_Annuall_baseflow$cluster)))
+  max(ddddddddd)
+  str(ddddddddd)
+  annuall_baseflow_ED$Seq_ED[max(ddddddddd)+1]
+  jj<-max(ddddddddd)
+  JJJ<-as.numeric( length(annuall_baseflow_ED$Seq_ED))
+  annuall_baseflow_ED$Seq_ED[max(ddddddddd)+1]
+  i=annuall_baseflow_ED$Seq_ED[max(ddddddddd)+1]
+  ##################
+  
+  #for (i in annuall_baseflow_ED$Seq){  
+  # m<- assign(paste("segment_", i, sep = "_"),subset(annuall_baseflow_ED, Seq==i))}
+  
+  ######################################
+  Max_Seq_ED_Annuall_baseflow<-max(annuall_baseflow_ED$Seq_ED)
+  EDPP<-plyr::ddply(annuall_baseflow_ED, plyr::.(Seq_ED), function(m){
+    FD<-rkt(m$yearfraction,m$sum_baseflow)
+    FD$B
+    b0<- median(m$sum_baseflow)-(FD$B* median(m$Year))
+    m$overall_slope<- b0+(FD$B*m$Year)
+    length(m$Year)
+    a3<-as.character(m$Year[1]) 
+    b3<-as.character(m$Year[length(m$Year)]) 
+    z3<-as.character(lapply(FD$B, round,2))
+    m$`Sens Slope`<- paste( (if (m$Seq_ED==1){"b)"} else if (m$Seq_ED==2){"c)"} else if (m$Seq_ED==3){"d)"} else if (m$Seq_ED==4){"e)"} else if  (m$Seq_ED==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+    m$Max_date_ED<- if (m$Seq_ED< Max_Seq_ED_Annuall_baseflow){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+    m$p.value<- ED_Annuall_baseflow$p.values[m$Seq_ED]
+    m$EDP<- if (m$Seq_ED< Max_Seq_ED_Annuall_baseflow){paste("EDP", m$Seq_ED," ","p","(",m$p.value,")", sep = "")} else {as.character (NA)}
+    m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+    m$Mid_date_ED<- median(m$date)
+    #######
+    myts_ED_annual <- ts(m$sum_baseflow, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+    MKLTP_Annuall_Baseflow_ED<- MannKendallLTP( myts_ED_annual)
+    m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Annuall_Baseflow_ED$Mann_Kendall_LTP[2], round,2),")", sep = "")
+    #########################
+    m$Mid_date_ED<- min(m$date)
+    m$Mean<-as.numeric (mean(m$sum_baseflow))
+    m$MKLTP.Sig<- if (MKLTP_Annuall_Baseflow_ED$Mann_Kendall_LTP[2]>0.01){
+      paste(lapply(MKLTP_Annuall_Baseflow_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+    m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+    m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+    m$overll_line<-as.numeric (NA)
+    m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+    #######################
+    return(m)
+  }
+  )
+  
+  #####################################################################################
+  total_baseflow_annuall_EDP <- rbind(annuall_baseflow_ED,EDPP)
+  
+  tiff(paste0(" Annual baseflow_trend_ EDP change point ",".tiff"),width=2000, height=1500, res = 350)
+  annual_baseflowtrend_EDP1<-ggplot( total_baseflow_annuall_EDP, aes(x=date,color=`Sens Slope`))+
+    geom_point(aes( y=sum_baseflow),size=1) +xlab("Date")+ylab("Annual Baseflow (mm/yr)")+
+    ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+  annual_baseflowtrend_EDP2<-annual_baseflowtrend_EDP1+ geom_line(aes(y=overll_line),size=0.8,
+                                                                  linetype= if( total_baseflow_annuall_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+  annual_baseflowtrend_EDP3<-annual_baseflowtrend_EDP2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+  annual_baseflowtrend_EDP4<-annual_baseflowtrend_EDP3+geom_line(aes(y=mLine),size=0.8,
+                                                                 linetype= if( total_baseflow_annuall_EDP$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})
+  #########
+  
+  for (i in  total_baseflow_annuall_EDP$Max_date_ED){
+    annual_baseflowtrend_EDP4  <- annual_baseflowtrend_EDP4+ 
+      geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+  }
+  
+  annual_baseflowtrend_EDP4<-annual_baseflowtrend_EDP4+geom_text(mapping = aes(x = Max_date_ED,
+                                                                               y = max(sum_baseflow),
+                                                                               label = EDP,
+                                                                               hjust = 1.5,
+                                                                               vjust = 1.5),
+                                                                 size=3,
+                                                                 angle=90,
+                                                                 show.legend = FALSE,
+                                                                 data =  total_baseflow_annuall_EDP)
+  
+  annual_baseflowtrend_EDP4<- annual_baseflowtrend_EDP4+geom_text(mapping = aes(x = Mid_date_ED,
+                                                                                y = max(sum_baseflow),
+                                                                                label = Line.pvalue,
+                                                                                hjust =1,
+                                                                                vjust = 5.5),
+                                                                  size=2.5,
+                                                                  angle=90,
+                                                                  show.legend = FALSE,
+                                                                  data =  total_baseflow_annuall_EDP)
+  annual_baseflowtrend_EDP4
+}# end of if
+dev.off()
+######################################
+############################ WET and DRY SEASON for baseflow
+############################ SEASONAL SMK TEST
+##view(Baseflow_season)
+Baseflow_season<- Baseflow_season %>%
+  mutate(season = case_when(
+    Month %in% 5:10 ~ "Wet",
+    Month %in%  11:12  ~ "Dry",
+    Month %in%  1:4  ~ "Dry"))
+Baseflow_wetseason <- subset(Baseflow_season, season %in% c("Wet"))
+Baseflow_dryseason <- subset(Baseflow_season, season %in% c("Dry"))
+#####################
+##################### SMK test for  Baseflow in wet and dry season
+Tr_Baseflow_Dryseason<-rkt(Baseflow_dryseason$Year,Baseflow_dryseason$sum_baseflow,Baseflow_dryseason$Month,,TRUE)
+print(Tr_Baseflow_Dryseason)
+capture.output(summary(print(Tr_Baseflow_Dryseason)), file = "Baseflow_Dryseason SMK test results.txt")
+
+Tr_Baseflow_Wetseason<-rkt(Baseflow_wetseason$Year,Baseflow_wetseason$sum_baseflow,Baseflow_wetseason$Month,,TRUE)
+print(Tr_Baseflow_Wetseason)
+capture.output(summary(print(Tr_Baseflow_Wetseason)), file = "Baseflow_wetseason SMK test results.txt")
+############################
+######################## cahange point detectionLanzantes Change point test
+###################### dry season for baseflow, these data are monthly
+tiff(paste0(" Baseflow_dryseason_Lanzantes Change point ",".tiff"),width=1500, height=1000, res = 300)
+par(mfrow=c(1,1))
+plot(Baseflow_dryseason$Year,Baseflow_dryseason$sum_baseflow)
+s.res <- lanzante.test(Baseflow_dryseason$sum_baseflow)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( Baseflow_dryseason$sum_baseflow[1:i])
+s.2 <- mean(Baseflow_dryseason$sum_baseflow[(i+1):n])
+s <-(c(rep(s.1,i), rep(s.2,(n-i))))
+lines(Baseflow_dryseason$Year, s, col=2,lty=1)
+print(s.res)
+dev.off()
+################################## WET season for base flow these data are monthly
+tiff(paste0(" Baseflow_wetseason_Lanzantes Change point ",".tiff"),width=1500, height=1000, res = 300)
+par(mfrow=c(1,1))
+plot(Baseflow_wetseason$Year,Baseflow_wetseason$sum_baseflow)
+s.res <- lanzante.test(Baseflow_wetseason$sum_baseflow)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( Baseflow_wetseason$sum_baseflow[1:i])
+s.2 <- mean(Baseflow_wetseason$sum_baseflow[(i+1):n])
+s <-(c(rep(s.1,i), rep(s.2,(n-i))))
+lines(Baseflow_wetseason$Year, s, col=2,lty=1)
+print(s.res)
+dev.off()
+##################################### CDFM
+Baseflow_wetseason
+Baseflow_dryseason
+Mean_dry<- mean(Baseflow_dryseason$sum_baseflow)
+Baseflow_dryseason$pi_dry=((Baseflow_dryseason$sum_baseflow-Mean_dry)/6)
+Baseflow_dryseason$CDFM_dry<- cumsum(Baseflow_dryseason$pi_dry) # replace the cell freq.s by cumulative freq.s
+## wet
+Mean_wet<- mean(Baseflow_wetseason$sum_baseflow)
+Baseflow_wetseason$pi_wet=((Baseflow_wetseason$sum_baseflow-Mean_wet)/6)
+Baseflow_wetseason$CDFM_wet<- cumsum(Baseflow_wetseason$pi_wet) 
+###############  dry monthly lAN TEST
+s.res <- lanzante.test(Baseflow_dryseason$sum_baseflow)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( Baseflow_dryseason$sum_baseflow[1:i])
+s.2 <- mean(Baseflow_dryseason$sum_baseflow[(i+1):n])
+sd <-(c(rep(s.1,i), rep(s.2,(n-i))))
+sd<-as.data.frame(as.numeric(sd))
+Baseflow_dryseason$sd<-sd$`as.numeric(sd)`
+p_value <- s.res$p.value
+str(p_value)
+hhh<- if(p_value > 0.05){print("LAT (p>0.05)")} else if(p_value > 0.01 & p_value < 0.05){print("LAT (p<0.05)")} else{print("LAT (p<0.01)")}
+my_text1 <- hhh
+my_grob1 = grid.text(my_text1, gp=gpar(col="black", fontsize=7, fontface="bold"))
+year4=Baseflow_dryseason[i,2]
+lims<- c(min= as.Date(min(Baseflow_dryseason$date)), max= as.Date(max(Baseflow_dryseason$date)))
+time_baseflowdry<-ggplot(Baseflow_dryseason)+geom_line( aes(x=date, y=sum_baseflow),color= "black")
+time_baseflowdry1<-time_baseflowdry+geom_line(aes(x=date, y=CDFM_dry),alpha = 0.6, size = 0.7,color= "blue")
+time_baseflowdry2<-time_baseflowdry1+geom_smooth(aes(x=date, y=CDFM_dry),method="gam",color="red")+xlab("Date")+ylab("Monthly Baseflow (Dry)")
+time_baseflowdry3<-time_baseflowdry2+scale_y_continuous(sec.axis = sec_axis(name ="CDFM (mm)",~ . + 0))
+time_baseflowdry4<-time_baseflowdry3+geom_vline(aes(xintercept = year4),size = 0.7,color= "black",linetype="dashed")
+time_baseflowdry5<-time_baseflowdry4+geom_line(aes(x=date,y=sd),color= "black")+ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  annotation_custom(my_grob1, xmin = as.Date(max(year4,100)), xmax = as.Date(max(year4,100)), ymin =max(Baseflow_dryseason$sum_baseflow), ymax = max(Baseflow_dryseason$sum_baseflow))
+time_baseflowdry5
+dev.off()
+##############
+############## Wet SEASON lanzante TEST
+s.res <- lanzante.test(Baseflow_wetseason$sum_baseflow)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( Baseflow_wetseason$sum_baseflow[1:i])
+s.2 <- mean(Baseflow_wetseason$sum_baseflow[(i+1):n])
+sw<-(c(rep(s.1,i), rep(s.2,(n-i))))
+sw<-as.data.frame(as.numeric(sw))
+Baseflow_wetseason$sw<-sw$`as.numeric(sw)`
+p_value <- s.res$p.value
+str(p_value)
+hhhh<- if(p_value > 0.05){print("LAT (p>0.05)")} else if(p_value > 0.01 & p_value < 0.05){print("LAT (p<0.05)")} else{print("LAT (p<0.01)")}
+my_text2 <- hhhh
+my_grob2 = grid.text(my_text2, gp=gpar(col="black", fontsize=7, fontface="bold"))
+year5=Baseflow_wetseason[i,2]
+lims<- c(min= as.Date(min(Baseflow_wetseason$date)), max= as.Date(max(Baseflow_wetseason$date)))
+####### pLOTTING CDFM
+time_baseflowwet<-ggplot(Baseflow_wetseason)+geom_line( aes(x=date, y=sum_baseflow),color= "black")
+timee_wet1<-time_baseflowwet+geom_line(aes(x=date, y=CDFM_wet),alpha = 0.6, size = 0.7,color= "blue")
+time_baseflowwet2<-timee_wet1+geom_smooth(aes(x=date, y=CDFM_wet),method="gam",color="red")+xlab("Date")+ylab("Monthly Baseflow (Wet)")
+time_baseflowwet3<-time_baseflowwet2+scale_y_continuous(sec.axis = sec_axis(name ="CDFM (mm)",~ . + 0))
+time_baseflowwet4<-time_baseflowwet3+geom_vline(aes(xintercept = year5),size = 0.7,color= "black",linetype="dashed")
+time_baseflowwet5<-time_baseflowwet4+geom_line(aes(x=date,y=sw),color= "black")+ggtitle("")+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+ 
+  annotation_custom(my_grob2, xmin = as.Date(max(year5,100)), xmax = as.Date(max(year5,100)), ymin =max(Baseflow_wetseason$sum_baseflow), ymax = max(Baseflow_wetseason$sum_baseflow))
+time_baseflowwet5
+####################################################################### ALL CDFM PLOTS
+tiff(paste0("CDFM_Baseflow ",".tiff"),width=2000, height=2500, res = 350)
+p<-ggarrange(Time_Baseflow11,time_baseflowdry5,time_baseflowwet5, nrow =3, ncol =1, heights = c(10, 10,10),
+             widths =c(0.5) )
+dev.off()
+
+##################################
+ts_wet_baseflow <- xts(Baseflow_wetseason$sum_baseflow, as.Date(Baseflow_wetseason$date, "%Y-%m-%d"))
+ts_dry_baseflow <- xts(Baseflow_dryseason$sum_baseflow, as.Date(Baseflow_dryseason$date, "%Y-%m-%d"))
+# convert daily data to annual and monthly
+ts_y_baseflow_wet = apply.yearly(ts_wet_baseflow, sum)
+ts_y_baseflow_dry = apply.yearly(ts_dry_baseflow, sum)
+##ts_q = apply.quarterly(ts, sum)
+ts_wet_bf=data.frame(sum_baseflow=coredata(ts_y_baseflow_wet),date=index(ts_y_baseflow_wet))
+ts_dry_bf=data.frame(sum_baseflow=coredata(ts_y_baseflow_dry),date=index(ts_y_baseflow_dry))
+Baseflow_wet_annuall= ts_wet_bf %>% 
+  mutate(date = ymd(date)) %>% 
+  mutate_at(vars(date), funs(year, month, day))
+Baseflow_dry_annuall= ts_dry_bf %>% 
+  mutate(date = ymd(date)) %>% 
+  mutate_at(vars(date), funs(year, month, day))
+colnames(Baseflow_wet_annuall) <- c("sum_baseflow","date","Year","Month","Day")
+colnames(Baseflow_dry_annuall) <- c("sum_baseflow","date","Year","Month","Day")
+####
+Baseflow_wet_annuall$yearfraction<-(Baseflow_wet_annuall$Year+0.110)
+Baseflow_dry_annuall$yearfraction<-(Baseflow_dry_annuall$Year+0.110)
+########################
+Baseflow_dryseason
+#####################################ECP change point wet season
+Baseflow_Wet<-Baseflow_wet_annuall %>% dplyr::select(1)
+Baseflow_Wet<- as.matrix(Baseflow_Wet)
+x6= rep(c(min(Baseflow_wet_annuall$Year):max(Baseflow_wet_annuall$Year)), times= c(1))
+##################################### mem
+n1=length(Baseflow_wet_annuall$date)
+num=1
+mem1 <- vector()
+
+while (n1>10) {
+  
+  x= rep(c(num), times= c(10))
+  
+  n1=n1-10
+  
+  num=num+1
+  
+  mem1 <- append(mem1, x)
+  
+}
+
+x= rep(c(num), times= c(n1))
+
+mem1 <- append(mem1, x)
+
+print(mem1)
+
+#### mem= rep=shows possible number of change point and time should the same as x=baseflow length
+CP_Baseflow_wet= e.agglo(Baseflow_Wet,member=mem1,alpha=2,penalty=function(cp,Xts) 0)
+par(mfrow=c(1,1))
+tiff(paste0(" ECP change point for annual wet baseflow ",".tiff"),width=1500, height=1000, res = 300)
+CP_Baseflow_wet$progression
+#plot(CP_Baseflow_wet$cluster)
+plot(x6, CP_Baseflow_wet$cluster,
+     main="ECP test annual wet baseflow",
+     xlab = "Year",
+     ylab="cluster",
+     type="p",
+     col="blue")
+dev.off()
+
+########################################## orginal MK test for Baseflow_wet_annuall
+TR_wet_baseflow<-rkt(Baseflow_wet_annuall$yearfraction,Baseflow_wet_annuall$sum_baseflow)
+print(TR_wet_baseflow)
+capture.output(summary(print(TR_wet_baseflow)), file = " Baseflow_annual_wet MK test results.txt")
+TR_wet_baseflow$B
+b0<- median(Baseflow_wet_annuall$sum_baseflow)-(TR_wet_baseflow$B * median(Baseflow_wet_annuall$Year))
+Baseflow_wet_annuall$overall_slope<- b0+(TR_wet_baseflow$B * Baseflow_wet_annuall$Year)
+length(Baseflow_wet_annuall$Year)
+a2<-as.character(Baseflow_wet_annuall$Year[1]) 
+b2<-as.character(Baseflow_wet_annuall$Year[length(Baseflow_wet_annuall$Year)]) 
+z2<-as.character(lapply(TR_wet_baseflow$B, round,2))
+Baseflow_wet_annuall$`Sens Slope`<- paste("a)",a2,"-",b2,":"," ",z2," ","mm/yr",sep='')
+
+################################################## MKLTP
+Baseflow_wet_annuall$MKLTP.Sig<-as.numeric (NA)
+Baseflow_wet_annuall$Mean<-as.numeric (NA)
+Baseflow_wet_annuall$Line<-as.numeric (NA)
+Baseflow_wet_annuall$overll_line<-as.numeric (Baseflow_wet_annuall$overall_slope)
+Baseflow_wet_annuall$Line.pvalue<-as.character(NA)
+Baseflow_wet_annuall$Mid_date<-as.Date.numeric(NA)
+Baseflow_wet_annuall$mLine<- as.numeric (NA)
+#######################
+myts_Wet<- ts(Baseflow_wet_annuall$sum_baseflow, start=c(min(Baseflow_wet_annuall$Year)),
+              end=c(max(Baseflow_wet_annuall$Year)), frequency=1)
+MKLTP_Wet_Baseflow<- MannKendallLTP(myts_Wet)
+Baseflow_wet_annuall$MKLTP.Sig<- if (MKLTP_Wet_Baseflow$Mann_Kendall_LTP[2]>0.01){
+  paste(lapply(MKLTP_Wet_Baseflow$Mann_Kendall_LTP[2], round,2))} else {0.001}
+Baseflow_wet_annuall$Line.pvalue<-if (Baseflow_wet_annuall$MKLTP.Sig<=0.05){paste("MKLTP", " ","p","(",Baseflow_wet_annuall$MKLTP.Sig,")", sep = "")} else{NA}
+Baseflow_wet_annuall$Mid_date<-min(Baseflow_wet_annuall$date)
+############################
+Baseflow_wet_annuall$Seq<-as.numeric(CP_Baseflow_wet$cluster) 
+ddddddddd<-as.numeric( which(CP_Baseflow_wet$cluster == max(CP_Baseflow_wet$cluster)))
+Baseflow_wet_annuall$Seq[max(ddddddddd)+1]
+jj<-max(ddddddddd)
+JJJ<-as.numeric( length(Baseflow_wet_annuall$Seq))
+Baseflow_wet_annuall$Seq[max(ddddddddd)+1]
+i=Baseflow_wet_annuall$Seq[max(ddddddddd)+1]
+Baseflow_wet_annuall$Seq[jj:JJJ]<- 
+  if(i < as.numeric(Baseflow_wet_annuall$Seq[max(ddddddddd)])) {as.numeric(max(CP_Baseflow_wet$cluster)+1)} else{Baseflow_wet_annuall$Seq}
+###view(Baseflow_wet_annuall)
+Baseflow_wet_annuall$Max_date<- as.Date.numeric(NA) 
+Baseflow_wet_annuall$ECP<-as.character(NA) 
+Baseflow_wet_annuall$Seq_p.value<-as.numeric (NA)
+Baseflow_wet_annuall$MKLTP_p.value<-as.numeric (NA)
+max(Baseflow_wet_annuall$Seq)
+#################
+#for (i in Baseflow_wet_annuall$Seq){  
+# m<- assign(paste("segment_wet", i, sep = "_"),subset(Baseflow_wet_annuall, Seq==i))}
+######################################
+Max_Seq_wet<-max(Baseflow_wet_annuall$Seq)
+SSSSS<-plyr::ddply(Baseflow_wet_annuall, plyr::.(Seq), function(m){
+  FD<-rkt(m$yearfraction,m$sum_baseflow)
+  b0<- median(m$sum_baseflow)-(FD$B* median(m$Year))
+  m$overall_slope<- b0+(FD$B*m$Year)
+  length(m$Year)
+  a3<-as.character(m$Year[1]) 
+  b3<-as.character(m$Year[length(m$Year)]) 
+  z3<-as.character(lapply(FD$B, round,2))
+  m$`Sens Slope`<- paste( (if (m$Seq==1){"b)"} else if (m$Seq==2){"c)"} else if (m$Seq==3){"d)"} else if (m$Seq==4){"e)"} else if  (m$Seq==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+  m$Max_date<- if (m$Seq< Max_Seq_wet){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+  m$ECP<- if (m$Seq< Max_Seq_wet){paste("ECP", m$Seq, sep = "")} else {as.character (NA)}
+  m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+  #############
+  myts_Wet <- ts(m$sum_baseflow, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+  MKLTP_Wet_Baseflow<- MannKendallLTP(myts_Wet)
+  m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Wet_Baseflow$Mann_Kendall_LTP[2], round,2),")", sep = "")
+  ############################
+  m$Mid_date<- min(m$date)
+  m$Mean<-as.numeric (mean(m$sum_baseflow))
+  m$MKLTP.Sig<- if (MKLTP_Wet_Baseflow$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Wet_Baseflow$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+  m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+  m$overll_line<-as.numeric (NA)
+  m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+  #################
+  print(m$ECP)
+  return(m)
+}
+)
+##view(SSSSS)
+#########
+###############################
+total_baseflow_wet<- rbind(Baseflow_wet_annuall,SSSSS)
+##view(total_baseflow_wet)
+tiff(paste0(" Annual baseflow wet_trend_change point ",".tiff"),width=2000, height=1500, res = 350)
+Wet_baseflowtrend1<-ggplot(total_baseflow_wet, aes(x=date, color=`Sens Slope`))+
+  geom_point(aes(y=sum_baseflow , color=`Sens Slope`),size=1)+
+  ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  xlab("Date")+ylab("Wet Baseflow (mm/yr)")
+Wet_baseflowtrend2<-Wet_baseflowtrend1+geom_line(aes(y=overll_line),size=0.8,
+                                                 linetype= if(total_baseflow_wet$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+Wet_baseflowtrend3<-Wet_baseflowtrend2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+Wet_baseflowtrend4<-Wet_baseflowtrend3+geom_line(aes(y=mLine),size=0.8,
+                                                 linetype= if(total_baseflow_wet$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})                                         
+
+#################
+for (i in total_baseflow_wet$Max_date){
+  Wet_baseflowtrend4  <- Wet_baseflowtrend4+ 
+    geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+}
+
+Wet_baseflowtrend4<-Wet_baseflowtrend4+geom_text(mapping = aes(x = Max_date,
+                                                               y = max(sum_baseflow ),
+                                                               label = ECP,
+                                                               hjust = 1.5,
+                                                               vjust = 1.5),
+                                                 size=2.5,
+                                                 angle=90,
+                                                 show.legend = FALSE,
+                                                 data = total_baseflow_wet)
+
+Wet_baseflowtrend4<-Wet_baseflowtrend4+geom_text(mapping = aes(x=Mid_date,
+                                                               y = max(sum_baseflow ),
+                                                               fill=`Sens Slope`,
+                                                               label = Line.pvalue,
+                                                               hjust = 1,
+                                                               vjust = 3),
+                                                 size=2.5,
+                                                 angle=90,
+                                                 show.legend = FALSE,
+                                                 data = total_baseflow_wet)
+
+Wet_baseflowtrend4
+dev.off()
+#################
+################### A divisive hierarchical estimation algorithm for multiple change point analysis
+################### e.divisive ENERGY DIVISIVE for annuall data
+Baseflow_Wet
+for(i in 1:5){
+  ED_Wet_baseflow=e.divisive(X=Baseflow_Wet,sig.lvl=0.05,R=199,k=NULL,min.size=10,alpha=1)
+  if(ED_Wet_baseflow$p.values[1]<=0.05) {
+    print("End of Loop") ;
+    break
+  } else{"KHHHH"}
+  
+}
+
+if (max(ED_Wet_baseflow$cluster)<2){capture.output(print("No change point"), file = " EDP No Change point for wet season baseflow.txt")} else{
+  baseflow_ED_Wet<-Baseflow_wet_annuall %>% dplyr::select(1:8)
+  baseflow_ED_Wet$Seq_ED<-as.numeric(ED_Wet_baseflow$cluster) 
+  ########################################
+  ##view( baseflow_ED_Wet)
+  ################################################## MKLTP
+  baseflow_ED_Wet$MKLTP.Sig<-as.numeric (NA)
+  baseflow_ED_Wet$Mean<-as.numeric (NA)
+  baseflow_ED_Wet$Line<-as.numeric (NA)
+  baseflow_ED_Wet$overll_line<-as.numeric ( baseflow_ED_Wet$overall_slope)
+  baseflow_ED_Wet$Line.pvalue<-as.character(NA)
+  baseflow_ED_Wet$mLine<- as.numeric (NA)
+  ########################
+  baseflow_ED_Wet$Max_date_ED<- as.Date.numeric(NA) 
+  baseflow_ED_Wet$EDP<-as.character(NA) 
+  baseflow_ED_Wet$p.value<-as.numeric (NA)
+  baseflow_ED_Wet$Seq_p.value<-as.numeric (NA)
+  baseflow_ED_Wet$MKLTP_p.value<-as.numeric (NA)
+  baseflow_ED_Wet$Mid_date_ED<-as.Date.numeric(NA)
+  ###################################
+  myts_Wet_ED<- ts( baseflow_ED_Wet$sum_baseflow, start=c(min( baseflow_ED_Wet$Year)), end=c(max( baseflow_ED_Wet$Year)), frequency=1)
+  MKLTP_Wet_Baseflow_ED<- MannKendallLTP(myts_Wet_ED)
+  baseflow_ED_Wet$MKLTP.Sig<- if (MKLTP_Wet_Baseflow_ED$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Wet_Baseflow_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  baseflow_ED_Wet$Line.pvalue<-if ( baseflow_ED_Wet$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(", baseflow_ED_Wet$MKLTP.Sig,")", sep = "")} else{NA}
+  baseflow_ED_Wet$Mid_date_ED<-min( baseflow_ED_Wet$date)
+  ############################
+  ###########################
+  ddddddddd<-as.numeric( which(ED_Wet_baseflow$cluster == max(ED_Wet_baseflow$cluster)))
+  baseflow_ED_Wet$Seq_ED[max(ddddddddd)+1]
+  jj<-max(ddddddddd)
+  JJJ<-as.numeric( length( baseflow_ED_Wet$Seq_ED))
+  baseflow_ED_Wet$Seq_ED[max(ddddddddd)+1]
+  i= baseflow_ED_Wet$Seq_ED[max(ddddddddd)+1]
+  #################
+  #for (i in  baseflow_ED_Wet$Seq){  
+  # m<- assign(paste("segment_", i, sep = "_"),subset( baseflow_ED_Wet, Seq==i))}
+  ######################################
+  Max_Seq_ED_Wet<-max( baseflow_ED_Wet$Seq_ED)
+  EDPP<-plyr::ddply( baseflow_ED_Wet, plyr::.(Seq_ED), function(m){
+    FD<-rkt(m$yearfraction,m$sum_baseflow)
+    b0<- median(m$sum_baseflow)-(FD$B* median(m$Year))
+    m$overall_slope<- b0+(FD$B*m$Year)
+    length(m$Year)
+    a3<-as.character(m$Year[1]) 
+    b3<-as.character(m$Year[length(m$Year)]) 
+    z3<-as.character(lapply(FD$B, round,2))
+    m$`Sens Slope`<- paste( (if (m$Seq_ED==1){"b)"} else if (m$Seq_ED==2){"c)"} else if (m$Seq_ED==3){"d)"} else if (m$Seq_ED==4){"e)"} else if  (m$Seq_ED==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+    m$Max_date_ED<- if (m$Seq_ED< Max_Seq_ED_Wet){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+    m$p.value<- ED_Wet$p.values[m$Seq_ED]
+    m$EDP<- if (m$Seq_ED< Max_Seq_ED_Wet){paste("EDP", m$Seq_ED," ","p","(",m$p.value,")", sep = "")} else {as.character (NA)}
+    m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+    ######
+    myts_Wet_ED <- ts(m$sum_baseflow, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+    MKLTP_Wet_Baseflow_ED<- MannKendallLTP(myts_Wet_ED)
+    m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Wet_Baseflow_ED$Mann_Kendall_LTP[2], round,2),")", sep = "")
+    ########################
+    m$Mid_date_ED<- min(m$date)
+    m$Mean<-as.numeric (mean(m$sum_baseflow))
+    m$MKLTP.Sig<- if (MKLTP_Wet_Baseflow_ED$Mann_Kendall_LTP[2]>0.01){
+      paste(lapply(MKLTP_Wet_Baseflow_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+    m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+    m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+    m$overll_line<-as.numeric (NA)
+    m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+    #################
+    return(m)
+  }
+  )
+  
+  #####################################################################################
+  total_baseflow_Wet_EDP <- rbind( baseflow_ED_Wet,EDPP)
+  ####
+  tiff(paste0(" Wet baseflow_trend_EDP change point ",".tiff"),width=2000, height=1500, res = 350)
+  Wet_baseflowtrend_EDP1<-ggplot(total_baseflow_Wet_EDP, aes(x=date, color=`Sens Slope`))+
+    geom_point(aes(y=sum_baseflow, color=`Sens Slope`),size=1)+xlab("Date")+ylab("Wet Baseflow (mm/yr)")+
+    ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+  Wet_baseflowtrend_EDP2<-Wet_baseflowtrend_EDP1+geom_line(aes(y=overll_line),size=0.8,
+                                                           linetype= if(total_baseflow_Wet_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+  Wet_baseflowtrend_EDP3<-Wet_baseflowtrend_EDP2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+  Wet_baseflowtrend_EDP4<-Wet_baseflowtrend_EDP3+ geom_line(aes(y=mLine),size=0.8,
+                                                            linetype= if(total_baseflow_Wet_EDP$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})                                         
+  
+  ##########
+  
+  for (i in total_baseflow_Wet_EDP$Max_date_ED){
+    Wet_baseflowtrend_EDP4  <- Wet_baseflowtrend_EDP4+ 
+      geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+  }
+  
+  Wet_baseflowtrend_EDP4<-Wet_baseflowtrend_EDP4+geom_text(mapping = aes(x = Max_date_ED,
+                                                                         y = max(sum_baseflow),
+                                                                         label = EDP,
+                                                                         hjust = 1.5,
+                                                                         vjust = 1.5),
+                                                           size=3,
+                                                           angle=90,
+                                                           show.legend = FALSE,
+                                                           data =total_baseflow_Wet_EDP)
+  
+  Wet_baseflowtrend_EDP4<-Wet_baseflowtrend_EDP4+geom_text(mapping = aes(x = Mid_date_ED,
+                                                                         y = max(sum_baseflow),
+                                                                         label = Line.pvalue,
+                                                                         hjust = 1,
+                                                                         vjust = 5.5), 
+                                                           size=2.5,  
+                                                           angle=90,
+                                                           show.legend = FALSE,
+                                                           data =total_baseflow_Wet_EDP)
+  Wet_baseflowtrend_EDP4
+  
+}# end of if
+dev.off()
+##################
+################### Dry season annuall baseflow
+#####################################ECP change point wet season
+Baseflow_Dry<-Baseflow_dry_annuall %>% dplyr::select(1)
+Baseflow_Dry<- as.matrix(Baseflow_Dry)
+x7= rep(c(min(Baseflow_dry_annuall$Year):max(Baseflow_dry_annuall$Year)), times= c(1))
+##################################### mem
+n1=length(Baseflow_dry_annuall$date)
+num=1
+mem1 <- vector()
+
+while (n1>10) {
+  
+  x= rep(c(num), times= c(10))
+  
+  n1=n1-10
+  
+  num=num+1
+  
+  mem1 <- append(mem1, x)
+  
+}
+
+x= rep(c(num), times= c(n1))
+
+mem1 <- append(mem1, x)
+
+print(mem1)
+
+#### mem= rep=shows possible number of change point and time should the same as x= length
+CP_Baseflow_dry= e.agglo(Baseflow_Dry,member=mem1,alpha=2,penalty=function(cp,Xts) 0)
+par(mfrow=c(1,1))
+tiff(paste0(" ECP change point for annual dry baseflow ",".tiff"),width=1500, height=1000, res = 300)
+CP_Baseflow_dry$progression
+#plot(CP_Baseflow_dry$cluster)
+plot(x7, CP_Baseflow_dry$cluster,
+     main="ECP test annual dry baseflow",
+     xlab = "Year",
+     ylab="cluster",
+     type="p",
+     col="blue")
+dev.off()
+
+########################################## orginal MK test for Baseflow_dry_annuall
+TR_dry_baseflow<-rkt(Baseflow_dry_annuall$yearfraction,Baseflow_dry_annuall$sum_baseflow)
+print(TR_dry_baseflow)
+capture.output(summary(print(TR_dry_baseflow)), file = " Baseflow_annual_dry MK test results.txt")
+TR_dry_baseflow$B
+b0<- median(Baseflow_dry_annuall$sum_baseflow)-(TR_dry_baseflow$B * median(Baseflow_dry_annuall$Year))
+Baseflow_dry_annuall$overall_slope<- b0+(TR_dry_baseflow$B * Baseflow_dry_annuall$Year)
+length(Baseflow_dry_annuall$Year)
+a2<-as.character(Baseflow_dry_annuall$Year[1]) 
+b2<-as.character(Baseflow_dry_annuall$Year[length(Baseflow_dry_annuall$Year)]) 
+z2<-as.character(lapply(TR_dry_baseflow$B, round,2))
+Baseflow_dry_annuall$`Sens Slope`<- paste("a)",a2,"-",b2,":"," ",z2," ","mm/yr",sep='')
+################################################## MKLTP
+Baseflow_dry_annuall$MKLTP.Sig<-as.numeric (NA)
+Baseflow_dry_annuall$Mean<-as.numeric (NA)
+Baseflow_dry_annuall$Line<-as.numeric (NA)
+Baseflow_dry_annuall$overll_line<-as.numeric (Baseflow_dry_annuall$overall_slope)
+Baseflow_dry_annuall$Line.pvalue<-as.character(NA)
+Baseflow_dry_annuall$Mid_date<-as.Date.numeric(NA)
+Baseflow_dry_annuall$mLine<- as.numeric (NA)
+#######################
+myts_Dry<- ts(Baseflow_dry_annuall$sum_baseflow, start=c(min(Baseflow_dry_annuall$Year)),
+              end=c(max(Baseflow_dry_annuall$Year)), frequency=1)
+MKLTP_Dry_Baseflow<- MannKendallLTP(myts_Dry)
+Baseflow_dry_annuall$MKLTP.Sig<- if (MKLTP_Dry_Baseflow$Mann_Kendall_LTP[2]>0.01){
+  paste(lapply(MKLTP_Dry_Baseflow$Mann_Kendall_LTP[2], round,2))} else {0.001}
+Baseflow_dry_annuall$Line.pvalue<-if (Baseflow_dry_annuall$MKLTP.Sig<=0.05){paste("MKLTP", " ","p","(",Baseflow_dry_annuall$MKLTP.Sig,")", sep = "")} else{NA}
+Baseflow_dry_annuall$Mid_date<-min(Baseflow_dry_annuall$date)
+############################
+Baseflow_dry_annuall$Seq<-as.numeric(CP_Baseflow_dry$cluster) 
+ddddddddd<-as.numeric( which(CP_Baseflow_dry$cluster == max(CP_Baseflow_dry$cluster)))
+Baseflow_dry_annuall$Seq[max(ddddddddd)+1]
+jj<-max(ddddddddd)
+JJJ<-as.numeric( length(Baseflow_dry_annuall$Seq))
+Baseflow_dry_annuall$Seq[max(ddddddddd)+1]
+i=Baseflow_dry_annuall$Seq[max(ddddddddd)+1]
+Baseflow_dry_annuall$Seq[jj:JJJ]<- 
+  if(i < as.numeric(Baseflow_dry_annuall$Seq[max(ddddddddd)])) {as.numeric(max(CP_Baseflow_dry$cluster)+1)} else{Baseflow_dry_annuall$Seq}
+###view(Baseflow_dry_annuall)
+Baseflow_dry_annuall$Max_date<- as.Date.numeric(NA) 
+Baseflow_dry_annuall$ECP<-as.character(NA) 
+Baseflow_dry_annuall$Seq_p.value<-as.numeric (NA)
+Baseflow_dry_annuall$MKLTP_p.value<-as.numeric (NA)
+max(Baseflow_dry_annuall$Seq)
+#################
+#for (i in Baseflow_dry_annuall$Seq){  
+# m<- assign(paste("segment_wet", i, sep = "_"),subset(Baseflow_dry_annuall, Seq==i))}
+######################################
+Max_Seq_dry<-max(Baseflow_dry_annuall$Seq)
+SSSSS<-plyr::ddply(Baseflow_dry_annuall, plyr::.(Seq), function(m){
+  FD<-rkt(m$yearfraction,m$sum_baseflow)
+  b0<- median(m$sum_baseflow)-(FD$B* median(m$Year))
+  m$overall_slope<- b0+(FD$B*m$Year)
+  length(m$Year)
+  a3<-as.character(m$Year[1]) 
+  b3<-as.character(m$Year[length(m$Year)]) 
+  z3<-as.character(lapply(FD$B, round,2))
+  m$`Sens Slope`<- paste( (if (m$Seq==1){"b)"} else if (m$Seq==2){"c)"} else if (m$Seq==3){"d)"} else if (m$Seq==4){"e)"} else if  (m$Seq==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+  m$Max_date<- if (m$Seq< Max_Seq_dry){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+  m$ECP<- if (m$Seq< Max_Seq_dry){paste("ECP", m$Seq, sep = "")} else {as.character (NA)}
+  m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+  #############
+  myts_Wet <- ts(m$sum_baseflow, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+  MKLTP_Dry_Baseflow<- MannKendallLTP(myts_Wet)
+  m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Dry_Baseflow$Mann_Kendall_LTP[2], round,2),")", sep = "")
+  ############################
+  m$Mid_date<- min(m$date)
+  m$Mean<-as.numeric (mean(m$sum_baseflow))
+  m$MKLTP.Sig<- if (MKLTP_Dry_Baseflow$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Dry_Baseflow$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+  m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+  m$overll_line<-as.numeric (NA)
+  m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+  #################
+  print(m$ECP)
+  return(m)
+}
+)
+##view(SSSSS)
+#########
+###############################
+total_baseflow_dry<- rbind(Baseflow_dry_annuall,SSSSS)
+##view(total_baseflow_wet)
+tiff(paste0(" Annual baseflow dry_trend_change point ",".tiff"),width=2000, height=1500, res = 350)
+Dry_baseflowtrend1<-ggplot(total_baseflow_dry, aes(x=date, color=`Sens Slope`))+
+  geom_point(aes(y=sum_baseflow , color=`Sens Slope`),size=1)+
+  ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  xlab("Date")+ylab("Dry Baseflow (mm/yr)")
+Dry_baseflowtrend2<-Dry_baseflowtrend1+geom_line(aes(y=overll_line),size=0.8,
+                                                 linetype= if(total_baseflow_dry$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+Dry_baseflowtrend3<-Dry_baseflowtrend2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+Dry_baseflowtrend4<-Dry_baseflowtrend3+geom_line(aes(y=mLine),size=0.8,
+                                                 linetype= if(total_baseflow_dry$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})                                         
+
+#################
+for (i in total_baseflow_dry$Max_date){
+  Dry_baseflowtrend4  <- Dry_baseflowtrend4+ 
+    geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+}
+
+Dry_baseflowtrend4<-Dry_baseflowtrend4+geom_text(mapping = aes(x = Max_date,
+                                                               y = max(sum_baseflow ),
+                                                               label = ECP,
+                                                               hjust = 1.5,
+                                                               vjust = 1.5),
+                                                 size=2.5,
+                                                 angle=90,
+                                                 show.legend = FALSE,
+                                                 data = total_baseflow_dry)
+
+Dry_baseflowtrend4<-Dry_baseflowtrend4+geom_text(mapping = aes(x=Mid_date,
+                                                               y = max(sum_baseflow ),
+                                                               fill=`Sens Slope`,
+                                                               label = Line.pvalue,
+                                                               hjust = 1,
+                                                               vjust = 3),
+                                                 size=2.5,
+                                                 angle=90,
+                                                 show.legend = FALSE,
+                                                 data = total_baseflow_dry)
+
+Dry_baseflowtrend4
+dev.off()
+#################
+################### A divisive hierarchical estimation algorithm for multiple change point analysis
+################### e.divisive ENERGY DIVISIVE for annuall data
+Baseflow_Dry
+for(i in 1:5){
+  ED_Dry_baseflow=e.divisive(X=Baseflow_Dry,sig.lvl=0.05,R=199,k=NULL,min.size=10,alpha=1)
+  if(ED_Dry_baseflow$p.values[1]<=0.05) {
+    print("End of Loop") ;
+    break
+  } else{ print("KHHHH")}
+  
+}
+
+if (max(ED_Dry_baseflow$cluster)<2){capture.output(print("No change point"), file = " EDP No Change point for wet season baseflow.txt")} else{
+  baseflow_ED_Dry<-Baseflow_dry_annuall %>% dplyr::select(1:8)
+  baseflow_ED_Dry$Seq_ED<-as.numeric(ED_Dry_baseflow$cluster) 
+  ########################################
+  ##view( baseflow_ED_Dry)
+  ################################################## MKLTP
+  baseflow_ED_Dry$MKLTP.Sig<-as.numeric (NA)
+  baseflow_ED_Dry$Mean<-as.numeric (NA)
+  baseflow_ED_Dry$Line<-as.numeric (NA)
+  baseflow_ED_Dry$overll_line<-as.numeric ( baseflow_ED_Dry$overall_slope)
+  baseflow_ED_Dry$Line.pvalue<-as.character(NA)
+  baseflow_ED_Dry$mLine<- as.numeric (NA)
+  ########################
+  baseflow_ED_Dry$Max_date_ED<- as.Date.numeric(NA) 
+  baseflow_ED_Dry$EDP<-as.character(NA) 
+  baseflow_ED_Dry$p.value<-as.numeric (NA)
+  baseflow_ED_Dry$Seq_p.value<-as.numeric (NA)
+  baseflow_ED_Dry$MKLTP_p.value<-as.numeric (NA)
+  baseflow_ED_Dry$Mid_date_ED<-as.Date.numeric(NA)
+  ###################################
+  myts_Dry_ED<- ts(baseflow_ED_Dry$sum_baseflow, start=c(min( baseflow_ED_Dry$Year)), end=c(max( baseflow_ED_Dry$Year)), frequency=1)
+  MKLTP_Dry_Baseflow_ED<- MannKendallLTP(myts_Dry_ED)
+  baseflow_ED_Dry$MKLTP.Sig<- if (MKLTP_Dry_Baseflow_ED$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Dry_Baseflow_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  baseflow_ED_Dry$Line.pvalue<-if ( baseflow_ED_Dry$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(", baseflow_ED_Dry$MKLTP.Sig,")", sep = "")} else{NA}
+  baseflow_ED_Dry$Mid_date_ED<-min( baseflow_ED_Dry$date)
+  ############################
+  ###########################
+  ddddddddd<-as.numeric( which(ED_Dry_baseflow$cluster == max(ED_Dry_baseflow$cluster)))
+  baseflow_ED_Dry$Seq_ED[max(ddddddddd)+1]
+  jj<-max(ddddddddd)
+  JJJ<-as.numeric( length( baseflow_ED_Dry$Seq_ED))
+  baseflow_ED_Dry$Seq_ED[max(ddddddddd)+1]
+  i= baseflow_ED_Dry$Seq_ED[max(ddddddddd)+1]
+  #################
+  #for (i in  baseflow_ED_Dry$Seq){  
+  # m<- assign(paste("segment_", i, sep = "_"),subset( baseflow_ED_Dry, Seq==i))}
+  ######################################
+  Max_Seq_ED_Dry<-max( baseflow_ED_Dry$Seq_ED)
+  EDPP1<-plyr::ddply(baseflow_ED_Dry, plyr::.(Seq_ED), function(m){
+    FD<-rkt(m$yearfraction,m$sum_baseflow)
+    b0<- median(m$sum_baseflow)-(FD$B* median(m$Year))
+    m$overall_slope<- b0+(FD$B*m$Year)
+    length(m$Year)
+    a3<-as.character(m$Year[1]) 
+    b3<-as.character(m$Year[length(m$Year)]) 
+    z3<-as.character(lapply(FD$B, round,2))
+    m$`Sens Slope`<- paste( (if (m$Seq_ED==1){"b)"} else if (m$Seq_ED==2){"c)"} else if (m$Seq_ED==3){"d)"} else if (m$Seq_ED==4){"e)"} else if  (m$Seq_ED==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+    m$Max_date_ED<- if (m$Seq_ED< Max_Seq_ED_Dry){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+    m$p.value<- ED_Wet$p.values[m$Seq_ED]
+    m$EDP<- if (m$Seq_ED< Max_Seq_ED_Dry){paste("EDP", m$Seq_ED," ","p","(",m$p.value,")", sep = "")} else {as.character (NA)}
+    m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+    ######
+    myts_Dry_ED <- ts(m$sum_baseflow, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+    MKLTP_Dry_Baseflow_ED<- MannKendallLTP(myts_Dry_ED)
+    m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Dry_Baseflow_ED$Mann_Kendall_LTP[2], round,2),")", sep = "")
+    ########################
+    m$Mid_date_ED<- min(m$date)
+    m$Mean<-as.numeric (mean(m$sum_baseflow))
+    m$MKLTP.Sig<- if (MKLTP_Dry_Baseflow_ED$Mann_Kendall_LTP[2]>0.01){
+      paste(lapply(MKLTP_Dry_Baseflow_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+    m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+    m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+    m$overll_line<-as.numeric (NA)
+    m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+    #################
+    return(m)
+  }
+  )
+  
+  #####################################################################################
+  total_baseflow_dry_EDP <- rbind( baseflow_ED_Dry,EDPP1)
+  ####
+  tiff(paste0(" Dry baseflow_trend_EDP change point ",".tiff"),width=2000, height=1500, res = 350)
+  Dry_baseflowtrend_EDP1<-ggplot(total_baseflow_dry_EDP, aes(x=date, color=`Sens Slope`))+
+    geom_point(aes(y=sum_baseflow, color=`Sens Slope`),size=1)+xlab("Date")+ylab("Dry Baseflow (mm/yr)")+
+    ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+  Dry_baseflowtrend_EDP2<-Dry_baseflowtrend_EDP1+geom_line(aes(y=overll_line),size=0.8,
+                                                           linetype= if(total_baseflow_dry_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+  Dry_baseflowtrend_EDP3<-Dry_baseflowtrend_EDP2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+  Dry_baseflowtrend_EDP4<-Dry_baseflowtrend_EDP3+ geom_line(aes(y=mLine),size=0.8,
+                                                            linetype= if(total_baseflow_dry_EDP$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})                                         
+  
+  ##########
+  
+  for (i in total_baseflow_dry_EDP$Max_date_ED){
+    Dry_baseflowtrend_EDP4  <- Dry_baseflowtrend_EDP4+ 
+      geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+  }
+  
+  Dry_baseflowtrend_EDP4<-Dry_baseflowtrend_EDP4+geom_text(mapping = aes(x = Max_date_ED,
+                                                                         y = max(sum_baseflow),
+                                                                         label = EDP,
+                                                                         hjust = 1.5,
+                                                                         vjust = 1.5),
+                                                           size=3,
+                                                           angle=90,
+                                                           show.legend = FALSE,
+                                                           data =total_baseflow_dry_EDP)
+  
+  Dry_baseflowtrend_EDP4<-Dry_baseflowtrend_EDP4+geom_text(mapping = aes(x = Mid_date_ED,
+                                                                         y = max(sum_baseflow),
+                                                                         label = Line.pvalue,
+                                                                         hjust = 1,
+                                                                         vjust = 5.5), 
+                                                           size=2.5,  
+                                                           angle=90,
+                                                           show.legend = FALSE,
+                                                           data =total_baseflow_dry_EDP)
+  Dry_baseflowtrend_EDP4
+  
+}# end of if
+dev.off()
+#################
+RDWB<- Baseflow_wet_annuall$sum_baseflow
+RDWB<- as.data.frame(RDWB)
+RDWB$Dry<- Baseflow_dry_annuall$sum_baseflow
+RDWB$Wet<-RDWB$RDWB
+RDWB$divided<-RDWB$Dry/RDW$Wet
+RDWB$Comulative<- cumsum(RDWB$divided)
+RDWB$Percent<- RDWB$divided*100
+RDWB$Year<-Baseflow_wet_annuall$date  
+###view(RDW)
+RDWB1<-ggplot(RDWB)+geom_line(aes(x=Year,y=Percent),color="blue")+ xlab("Date")+ylab("Dry/Wet (%)")+
+  geom_smooth(aes(x=Year,y=Percent), color="red")
+RDWB2<-RDWB1+theme_bw()
+RDWB2
+dev.off()
+###############################################################
+##### Hydrological Drought
+################
+#FlowScreen: Daily Streamflow Trend and Change Point Screening
+#caniapiscau.ts <- create.ts(caniapiscau, hyrstart=3), hyrstart define start month of hydrologic year.
+##view(flow)
+flow<- na.omit(flow) 
+Flow_dr<-Flow
+Flow_dr$ID <-flow$`Site Ref`
+Flow_dr$ID <- as.character(as.numeric(Flow_dr$ID))
+Flow_dr$ID <- paste("S", Flow_dr$ID, sep="")
+Flow_dr$PARAM <- 1
+Flow_dr$Date <- Flow$date
+Flow_dr$Flow <- flow$`Discharge (m³/s) MEAN`
+Flow_dr$SYM <- "B"
+Flow_dr$Agency <- "WC"
+Flow_dr<-Flow_dr%>% dplyr::select(-1)
+head(Flow_dr)
+str(Flow_dr)
+Flow_dr<- Flow_dr[order(as.Date(Flow_dr$Date)),]
+Flow_dr$Flow <- as.numeric(Flow_dr$Q_GL)
+Flow_dr<-Flow_dr%>% dplyr::select(-1)
+##view(Flow_dr)
+# This line is time consuming
+memory.limit(size=560000000)
+Flow_dr.ts <- create.ts(Flow_dr, hyrstart=5)
+#################################
+#To make on specific column as.numeric
+nm1 <- grep("hmonth", names(Flow_dr.ts))
+Flow_dr.ts[nm1] <- lapply(Flow_dr.ts[nm1], as.numeric)
+#To make on specific column as.Date
+Date1 <- grep("Date", names(Flow_dr.ts))
+
+Flow_dr.ts[Date1] <- lapply(Flow_dr.ts[Date1], as.Date)
+str(Flow_dr.ts)
+Flow_dr.ts4<-Flow_dr.ts
+#########################
+res4 <- dr.events(Flow_dr.ts4)
+events <- res4$DroughtEvents
+write.xlsx(events, file = "drought_events.xlsx",
+           sheetName="droughtevents", append=TRUE)
+
+################################
+Flow_dr.ts$day<-format(as.Date(Flow_dr.ts$Date,format="%Y-%m-%d"), format = "%d")
+str(Flow_dr.ts)
+nm2 <- grep("day", names(Flow_dr.ts))
+Flow_dr.ts[nm2] <- lapply(Flow_dr.ts[nm2], as.numeric)
+names(Flow_dr.ts)<- gsub("Flow", "flow", names(Flow_dr.ts))
+names(Flow_dr.ts)<- gsub("hody", "baseflow", names(Flow_dr.ts))
+str(Flow_dr.ts)
+
+#This function extracts the partial duration series for all streamflow 
+#droughts based on a movingwindow quantile threshold. 
+#Also returns summary information (start date, end date, duration, deficitvolume) for each drought event.
+#dr.events(TS, Qdr = 0.2, WinSize = 30, IntEventDur = 10, EventDur = 15)
+### creat lfobj for xts
+Flow_dr.ts1<-createlfobj(Flow_dr.ts)
+#as.xts(Flow_dr.ts)
+##############################################################################
+####lfstat: Calculation of Low Flow Statistics for Daily Stream Flow Data
+# Identifying Low Flow Periods(LFP)
+
+Flow_dr.ts1<-xts(Flow_dr.ts1, as.Date(Flow_dr.ts1$Date, "%Y-%m-%d"))
+InT_Time<- paste(min(Flow_dr.ts$year),":",":",max(Flow_dr.ts$year), sep = "")
+Flow_dr.ts2 <- as.xts(Flow_dr.ts1)[InT_Time, ]
+LFP <- find_droughts(Flow_dr.ts2,threshold = 0.1)
+#view(LFP)
+head(Flow_dr.ts2)
+#plot(LFP)
+# To save interactive graph in html
+library(htmlwidgets)
+saveWidget(plot(LFP), file="Drought duration.html")
+# provide threshold as a constant value
+LFP1 <- find_droughts(Flow_dr.ts2, threshold = 0.2)
+head(LFP1)
+summary(LFP1)
+#plot(LFP)
+saveWidget(plot(LFP1), file="Drought duration threshold = 0.2.html")
+
+###################### Change point for drought 
+drought_events<- events
+#view(drought_events)
+drought_events<-drought_events%>% dplyr::select(2,5,6)
+drought_events$Severity<- (drought_events$Severity*86400*1000)*drought_events$Duration
+drought_events$Severity<- drought_events$Severity/Area
+#view(drought_events)
+#drought_events$Duration
+ts_dorught <- xts(drought_events$Duration, as.Date(drought_events$Start, "%Y-%m-%d"))
+ts_severity<-xts(drought_events$Severity, as.Date(drought_events$Start, "%Y-%m-%d"))
+# convert daily data to annual and monthly
+ts_m_drought = apply.monthly(ts_dorught, mean)
+ts_y_drought = apply.yearly(ts_dorught, mean)
+###Severity
+ts_m_severity = apply.monthly(ts_severity, mean)
+ts_y_severity = apply.yearly(ts_severity, mean)
+##ts_q = apply.quarterly(ts, sum)
+####Duration
+str(ts_m_drought)
+ts_m_dd=data.frame(sum_drougthduration=coredata(ts_m_drought),date=index(ts_m_drought))
+ts_y_dd=data.frame(sum_droughtduration=coredata(ts_y_drought),date=index(ts_y_drought))
+Droughtduration_monthly= ts_m_dd %>% 
+  mutate(date = ymd(date)) %>% 
+  mutate_at(vars(date), funs(year, month, day))
+Droughtduration_yearly= ts_y_dd %>% 
+  mutate(date = ymd(date)) %>% 
+  mutate_at(vars(date), funs(year, month, day))
+
+colnames(Droughtduration_monthly) <- c("sum_droughtduration","date","Year","Month","Day")
+colnames(Droughtduration_yearly) <- c("sum_droughtduration","date","Year","Month","Day")
+##view(Droughtduration_monthly)
+str(Droughtduration_monthly)
+########## Severity
+ts_m_ss=data.frame(sum_droughtseverity=coredata(ts_m_severity),date=index(ts_m_severity))
+ts_y_ss=data.frame(sum_droughtseverity=coredata(ts_y_severity),date=index(ts_y_severity))
+Droughtseverity_monthly= ts_m_ss %>% 
+  mutate(date = ymd(date)) %>% 
+  mutate_at(vars(date), funs(year, month, day))
+Droughtseverity_yearly= ts_y_ss %>% 
+  mutate(date = ymd(date)) %>% 
+  mutate_at(vars(date), funs(year, month, day))
+colnames(Droughtseverity_monthly) <- c("sum_droughtseverity","date","Year","Month","Day")
+colnames(Droughtseverity_yearly) <- c("sum_droughtseverity","date","Year","Month","Day")
+Droughtduration_yearly$yearfraction<-(Droughtduration_yearly$Year+0.110)
+Droughtseverity_yearly$yearfraction<-(Droughtseverity_yearly$Year+0.110)
+##view(Droughtseverity_monthly)
+str(Droughtseverity_monthly)
+############################### SMK test for Drought duration
+Tr_Droughtduration<-rkt(Droughtduration_monthly$Year,Droughtduration_monthly$sum_droughtduration,Droughtduration_monthly$Month,,TRUE)
+print(Tr_Droughtduration)
+capture.output(summary(print(Tr_Droughtduration)), file = " Droughtduration SMK test results.txt")
+############################### SMK test for Drought Severity
+Tr_Droughtseverity<-rkt(Droughtseverity_monthly$Year,Droughtseverity_monthly$sum_droughtseverity,Droughtseverity_monthly$Month,,TRUE)
+print(Tr_Droughtseverity)
+capture.output(summary(print(Tr_Droughtseverity)), file = "Droughtseverity SMK test results.txt")
+
+######################################### ECP for Duration and severity
+##############  Duration
+#### ENERGY AGGLOMERATIVE
+
+Droughtduration<-Droughtduration_yearly%>% dplyr::select(1)
+Droughtduration<- as.matrix(Droughtduration)
+x8=Droughtduration_yearly$Year
+x8= rep(c(x8), times= c(1))
+####################
+n=length(Droughtduration_yearly$date)
+num=1
+mem <- vector()
+
+while (n>10) {
+  
+  x= rep(c(num), times= c(10))
+  
+  n=n-10
+  
+  num=num+1
+  
+  mem <- append(mem, x)
+  
+}
+
+x= rep(c(num), times= c(n))
+
+mem <- append(mem, x)
+
+print(mem)
+
+################## Duration
+tiff(paste0("ECP Drought Duration changepoint ",".tiff"),width=1500, height=1000, res = 300)
+CP_Droughtduration = e.agglo(X= Droughtduration,member=mem,alpha=2,penalty=function(cp,Xts) 0)
+CP_Droughtduration$estimates
+CP_Droughtduration$cluster
+plot(x8, CP_Droughtduration$cluster,
+     main="ECP test drought duration annually",
+     xlab = "Year",
+     ylab="cluster",
+     type="p",
+     col="blue")
+dev.off()
+########################
+##################################### OMK test for ANNUAL drought
+Droughtduration_yearly$yearfraction
+TR_annual_Droughtduration<-rkt(Droughtduration_yearly$yearfraction,Droughtduration_yearly$sum_droughtduration)
+print(TR_annual_Droughtduration)
+capture.output(summary(print(TR_annual_Droughtduration)), file = " Drought duration_annual MK test results.txt")
+TR_annual_Droughtduration$sl
+TR_annual_Droughtduration$B
+b0<- median(Droughtduration_yearly$sum_droughtduration)-(TR_annual_Droughtduration$B * median(Droughtduration_yearly$Year))
+Droughtduration_yearly$overall_slope<- b0+(TR_annual_Droughtduration$B * Droughtduration_yearly$Year)
+a1<-as.character(Droughtduration_yearly$Year[1]) 
+b1<-as.character(Droughtduration_yearly$Year[length(Droughtduration_yearly$Year)]) 
+z1<-as.character(lapply(TR_annual_Droughtduration$B, round,2))
+Droughtduration_yearly$`Sens Slope`<- paste("a)",a1,"-",b1,":"," ",z1," ","day/yr",sep='')
+################################################## MKLTP tEST FOR ANNUALL Droughtduration_yearly
+Droughtduration_yearly$MKLTP.Sig<-as.numeric (NA)
+Droughtduration_yearly$Mean<-as.numeric (NA)
+Droughtduration_yearly$Line<-as.numeric (NA)
+Droughtduration_yearly$overll_line<-as.numeric (Droughtduration_yearly$overall_slope)
+Droughtduration_yearly$Line.pvalue<-as.character(NA)
+Droughtduration_yearly$Mid_date<-as.Date.numeric(NA)
+Droughtduration_yearly$mLine<- as.numeric(NA)
+######################################
+Droughtduration_yearly$Max_date<- as.Date.numeric(NA) 
+Droughtduration_yearly$ECP<-as.character(NA) 
+Droughtduration_yearly$Seq_p.value<-as.numeric (NA)
+Droughtduration_yearly$MKLTP_p.value<-as.numeric (NA)
+#######################################
+myts_Annuall<- ts(Droughtduration_yearly$sum_droughtduration, start=c(min(Droughtduration_yearly$Year)), end=c(max(Droughtduration_yearly$Year)), frequency=1)
+MKLTP_Annuall_DD<- MannKendallLTP(myts_Annuall)
+Droughtduration_yearly$MKLTP.Sig<- if (MKLTP_Annuall_DD$Mann_Kendall_LTP[2]>0.01){
+  paste(lapply(MKLTP_Annuall_DD$Mann_Kendall_LTP[2], round,2))} else {0.001}
+Droughtduration_yearly$Line.pvalue<-if (Droughtduration_yearly$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",Droughtduration_yearly$MKLTP.Sig,")", sep = "")} else{NA}
+Droughtduration_yearly$Mid_date<-min(Droughtduration_yearly$date)
+############################
+Droughtduration_yearly$Seq<-as.numeric(CP_Droughtduration$cluster) 
+max(Droughtduration_yearly$Seq)
+max(length(Droughtduration_yearly$Seq))
+ddddddddd<-as.numeric( which(CP_Droughtduration$cluster == max(CP_Droughtduration$cluster)))
+Droughtduration_yearly$Seq[max(ddddddddd)+1]
+jj<-max(ddddddddd)
+JJJ<-as.numeric( length(Droughtduration_yearly$Seq))
+Droughtduration_yearly$Seq[max(ddddddddd)+1]
+#Droughtduration_yearly_dry$Seq<-if (Droughtduration_yearly_dry$Seq[max(ddddddddd)+1]< Droughtduration_yearly_dry$Seq[max(ddddddddd)]){ Droughtduration_yearly_dry$Seq[jj:JJJ]==max(CP_Droughtduration_yearly_dry$cluster)+1}
+i=Droughtduration_yearly$Seq[max(ddddddddd)+1]
+Droughtduration_yearly$Seq[jj:JJJ]<- 
+  if(i < as.numeric(Droughtduration_yearly$Seq[max(ddddddddd)])) {as.numeric(max(CP_Droughtduration$cluster)+1)} else{Droughtduration_yearly$Seq}
+
+################# SUBSET THE DATA BASED ON ecp
+
+#for (i in Droughtduration_yearly$Seq){  
+# m<- assign(paste("segment_", i, sep = "_"),subset(Droughtduration_yearly, Seq==i))}
+
+######################################
+Max_Seq_annuall<-max(Droughtduration_yearly$Seq)
+NNNNN<-plyr::ddply(Droughtduration_yearly, plyr::.(Seq), function(m){
+  FD<-rkt(m$yearfraction,m$sum_droughtduration)
+  capture.output(summary(print(FD)), file = " Droughtduration_annuall MK test results for segments.txt")
+  b0<- median(m$sum_droughtduration)-(FD$B* median(m$Year))
+  m$overall_slope<- b0+(FD$B*m$Year)
+  a3<-as.character(m$Year[1]) 
+  b3<-as.character(m$Year[length(m$Year)]) 
+  z3<-as.character(lapply(FD$B, round,2))
+  m$`Sens Slope`<- paste( (if (m$Seq==1){"b)"} else if (m$Seq==2){"c)"} else if (m$Seq==3){"d)"} else if (m$Seq==4){"e)"} else if  (m$Seq==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","day/yr",sep='')
+  m$Max_date<- if (m$Seq< Max_Seq_annuall){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+  m$ECP<- if (m$Seq< Max_Seq_annuall){paste("ECP", m$Seq, sep = "")} else {as.character (NA)}
+  m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+  ###################################
+  myts_Annuall<- ts(m$sum_droughtduration, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+  MKLTP_Annuall_DD<- MannKendallLTP(myts_Annuall)
+  m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Annuall_DD$Mann_Kendall_LTP[2], round,2),")", sep = "")
+  #########################
+  m$Mid_date<- min(m$date)
+  m$Mean<-as.numeric (mean(m$sum_droughtduration))
+  m$MKLTP.Sig<- if (MKLTP_Annuall_DD$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Annuall_DD$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+  m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+  m$overll_line<-as.numeric (NA)
+  m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+  ########
+  return(m)
+}
+)
+##view(NNNNN)
+#####################################################################################
+total_Droughtduration_annuall <- rbind(Droughtduration_yearly,NNNNN)
+###view(total_Droughtduration_annuall)
+
+tiff(paste0(" Annual Droughtduration_trend_change point ",".tiff"),width=2000, height=1500, res = 350)
+annuall_Droughtduration_trend1<-ggplot(total_Droughtduration_annuall, aes(x=date, color=`Sens Slope`))+
+  geom_point(aes( y=sum_droughtduration),size=1)+
+  ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  xlab("Date")+ylab("Drought Duration (day/yr)")
+
+annuall_Droughtduration_trend2<-annuall_Droughtduration_trend1+geom_line(aes(y=overll_line),size=0.8,
+                                                                         linetype= if(total_Droughtduration_annuall$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+
+annuall_Droughtduration_trend2<-annuall_Droughtduration_trend2+
+  geom_line(aes(y=Line),size=0.8,linetype="twodash")
+annuall_Droughtduration_trend3<-annuall_Droughtduration_trend2+geom_line(aes(y=mLine),size=0.8,
+                                                                         linetype= if(total_Droughtduration_annuall$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})
+################################
+for (i in total_Droughtduration_annuall$Max_date){
+  annuall_Droughtduration_trend3  <- annuall_Droughtduration_trend3+ 
+    geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+}
+
+annuall_Droughtduration_trend4<-annuall_Droughtduration_trend3+geom_text(mapping = aes(x = Max_date,
+                                                                                       y = max(sum_droughtduration),
+                                                                                       label = ECP,
+                                                                                       hjust = 1.5,
+                                                                                       vjust = 1.5),
+                                                                         size=3,
+                                                                         angle=90,
+                                                                         show.legend = FALSE,
+                                                                         data = total_Droughtduration_annuall)
+
+annuall_Droughtduration_trend4<- annuall_Droughtduration_trend4+geom_text(mapping = aes(x = Mid_date,
+                                                                                        y = max(sum_droughtduration),
+                                                                                        fill=`Sens Slope`,
+                                                                                        label = Line.pvalue,
+                                                                                        hjust =1,
+                                                                                        vjust = 5.5),
+                                                                          size=2.5,
+                                                                          angle=90,
+                                                                          show.legend = FALSE,
+                                                                          data = total_Droughtduration_annuall)
+annuall_Droughtduration_trend4
+dev.off()
+###############################
+#################### A divisive hierarchical estimation algorithm for multiple change point analysis
+################### e.divisive ENERGY DIVISIVE for annuall data
+Droughtduration
+for(i in 1:5){
+  ED_Annuall=e.divisive(X=Droughtduration,sig.lvl=0.05,R=199,k=NULL,min.size=10,alpha=1)
+  if(ED_Annuall$p.values[1]<=0.05) {
+    print("End of Loop") ;
+    break
+  } else{"KHHHH"}
+  
+}
+#######################
+Droughtduration_yearly
+if (max(ED_Annuall$cluster)<2){capture.output(print("No change point"), file = " EDP No Change point for drought duration.txt")} else{
+  Droughtduration_ED<-Droughtduration_yearly %>% dplyr::select(1:8)
+  Droughtduration_ED$Seq_ED<-as.numeric(ED_Annuall$cluster)
+  ####################
+  #################### MKLTP
+  Droughtduration_ED$MKLTP.Sig<-as.numeric (NA)
+  Droughtduration_ED$Mean<-as.numeric (NA)
+  Droughtduration_ED$Line<-as.numeric (NA)
+  Droughtduration_ED$overll_line<-as.numeric (Droughtduration_ED$overall_slope)
+  Droughtduration_ED$Line.pvalue<-as.character(NA)
+  Droughtduration_ED$mLine<- as.numeric(NA)
+  #####################################
+  Droughtduration_ED$Max_date_ED<- as.Date.numeric(NA) 
+  Droughtduration_ED$EDP<-as.character(NA) 
+  Droughtduration_ED$p.value<-as.numeric (NA)
+  Droughtduration_ED$Seq_p.value<-as.numeric (NA)
+  Droughtduration_ED$MKLTP_p.value<-as.numeric (NA)
+  Droughtduration_ED$Mid_date_ED<-as.Date.numeric(NA)
+  #####################################
+  myts_Annuall_ED<- ts(Droughtduration_ED$sum_droughtduration, start=c(min(Droughtduration_ED$Year)), end=c(max(Droughtduration_ED$Year)), frequency=1)
+  MKLTP_Annuall_DD_ED<- MannKendallLTP(myts_Annuall_ED)
+  Droughtduration_ED$MKLTP.Sig<- if (MKLTP_Annuall_DD_ED$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Annuall_DD_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  Droughtduration_ED$Line.pvalue<-if (Droughtduration_ED$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",Droughtduration_ED$MKLTP.Sig,")", sep = "")} else{NA}
+  Droughtduration_ED$Mid_date_ED<-min(Droughtduration_ED$date)
+  ####
+  ddddddddd<-as.numeric( which(ED_Annuall$cluster == max(ED_Annuall$cluster)))
+  max(ddddddddd)
+  str(ddddddddd)
+  Droughtduration_ED$Seq_ED[max(ddddddddd)+1]
+  jj<-max(ddddddddd)
+  JJJ<-as.numeric( length(Droughtduration_ED$Seq_ED))
+  Droughtduration_ED$Seq_ED[max(ddddddddd)+1]
+  #Droughtduration_ED_dry$Seq<-if (Droughtduration_ED_dry$Seq[max(ddddddddd)+1]< Droughtduration_ED_dry$Seq[max(ddddddddd)]){ Droughtduration_ED_dry$Seq[jj:JJJ]==max(CP_Droughtduration_ED_dry$cluster)+1}
+  i=Droughtduration_ED$Seq_ED[max(ddddddddd)+1]
+  #Droughtduration_ED$Seq_ED[jj:JJJ]<- 
+  #if(i < as.numeric(Droughtduration_ED$Seq_ED[max(ddddddddd)])) {as.numeric(max(ED_Annuall$cluster)+1)} else{Droughtduration_ED$Seq_ED}
+  #################
+  
+  #for (i in Droughtduration_ED$Seq){  
+  # m<- assign(paste("segment_", i, sep = "_"),subset(Droughtduration_ED, Seq==i))}
+  
+  ######################################
+  Max_Seq_ED_annuall<-max(Droughtduration_ED$Seq_ED)
+  EDPP<-plyr::ddply(Droughtduration_ED, plyr::.(Seq_ED), function(m){
+    FD<-rkt(m$yearfraction,m$sum_droughtduration)
+    b0<- median(m$sum_droughtduration)-(FD$B* median(m$Year))
+    m$overall_slope<- b0+(FD$B*m$Year)
+    length(m$Year)
+    a3<-as.character(m$Year[1]) 
+    b3<-as.character(m$Year[length(m$Year)]) 
+    z3<-as.character(lapply(FD$B, round,2))
+    m$`Sens Slope`<- paste( (if (m$Seq_ED==1){"b)"} else if (m$Seq_ED==2){"c)"} else if (m$Seq_ED==3){"d)"} else if (m$Seq_ED==4){"e)"} else if  (m$Seq_ED==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","day/yr",sep='')
+    m$Max_date_ED<- if (m$Seq_ED< Max_Seq_ED_annuall){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+    m$p.value<- ED_Annuall$p.values[m$Seq_ED]
+    m$EDP<- if (m$Seq_ED< Max_Seq_ED_annuall){paste("EDP", m$Seq_ED," ","p","(",m$p.value,")", sep = "")} else {as.character (NA)}
+    m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+    m$Mid_date_ED<- median(m$date)
+    #######
+    myts_ED_annual <- ts(m$sum_droughtduration, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+    MKLTP_Annuall_DD_ED<- MannKendallLTP( myts_ED_annual)
+    m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Annuall_DD_ED$Mann_Kendall_LTP[2], round,2),")", sep = "")
+    #########################
+    m$Mid_date_ED<- min(m$date)
+    m$Mean<-as.numeric (mean(m$sum_droughtduration))
+    m$MKLTP.Sig<- if (MKLTP_Annuall_DD_ED$Mann_Kendall_LTP[2]>0.01){
+      paste(lapply(MKLTP_Annuall_DD_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+    m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+    m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+    m$overll_line<-as.numeric (NA)
+    m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+    #######################
+    return(m)
+  }
+  )
+  
+  #####################################################################################
+  total_Droughtduration_annuall_EDP <- rbind(Droughtduration_ED,EDPP)
+  
+  tiff(paste0(" Annuall drought duration_trend_ EDP change point ",".tiff"),width=2000, height=1500, res = 350)
+  annual_durationtrend_EDP1<-ggplot(total_Droughtduration_annuall_EDP, aes(x=date,color=`Sens Slope`))+
+    geom_point(aes( y=sum_droughtduration),size=1) +xlab("Date")+ylab("Drought Duration (day/yr)")+
+    ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+  annual_durationtrend_EDP2<-annual_durationtrend_EDP1+ geom_line(aes(y=overll_line),size=0.8,
+                                                                  linetype= if(total_Droughtduration_annuall_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+  annual_durationtrend_EDP3<-annual_durationtrend_EDP2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+  annual_durationtrend_EDP4<-annual_durationtrend_EDP3+geom_line(aes(y=mLine),size=0.8,
+                                                                 linetype= if(total_Droughtduration_annuall_EDP$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})
+  #########
+  
+  for (i in total_Droughtduration_annuall_EDP$Max_date_ED){
+    annual_durationtrend_EDP4  <- annual_durationtrend_EDP4+ 
+      geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+  }
+  
+  annual_durationtrend_EDP4<-annual_durationtrend_EDP4+geom_text(mapping = aes(x = Max_date_ED,
+                                                                               y = max(sum_droughtduration),
+                                                                               label = EDP,
+                                                                               hjust = 1.5,
+                                                                               vjust = 1.5),
+                                                                 size=3,
+                                                                 angle=90,
+                                                                 show.legend = FALSE,
+                                                                 data = total_Droughtduration_annuall_EDP)
+  
+  annual_durationtrend_EDP4<- annual_durationtrend_EDP4+geom_text(mapping = aes(x = Mid_date_ED,
+                                                                                y = max(sum_droughtduration),
+                                                                                label = Line.pvalue,
+                                                                                hjust =1,
+                                                                                vjust = 5.5),
+                                                                  size=2.5,
+                                                                  angle=90,
+                                                                  show.legend = FALSE,
+                                                                  data = total_Droughtduration_annuall_EDP)
+  annual_durationtrend_EDP4
+}# end of if
+dev.off()
+###############################
+
+############################### Severity
+#### ENERGY AGGLOMERATIVE
+#view(Droughtseverity_yearly)
+Droughtseverity<-Droughtseverity_yearly%>% dplyr::select(1)
+Droughtseverity<- as.matrix(Droughtseverity)
+x9=Droughtseverity_yearly$Year
+x9= rep(c(x9), times= c(1))
+####################
+n=length(Droughtseverity_yearly$date)
+num=1
+mem <- vector()
+
+while (n>10) {
+  
+  x= rep(c(num), times= c(10))
+  
+  n=n-10
+  
+  num=num+1
+  
+  mem <- append(mem, x)
+  
+}
+
+x= rep(c(num), times= c(n))
+
+mem <- append(mem, x)
+
+print(mem)
+
+################## Severity
+tiff(paste0("ECP Drought Severity changepoint ",".tiff"),width=1500, height=1000, res = 300)
+CP_Droughtseverity = e.agglo(X= Droughtseverity,member=mem,alpha=2,penalty=function(cp,Xts) 0)
+CP_Droughtseverity$estimates
+CP_Droughtseverity$cluster
+plot(x9, CP_Droughtseverity$cluster,
+     main="ECP test drought severity annually",
+     xlab = "Year",
+     ylab="cluster",
+     type="p",
+     col="blue")
+dev.off()
+########################
+##################################### OMK test for ANNUAL drought
+Droughtseverity_yearly
+TR_annual_Droughtseverity<-rkt(Droughtseverity_yearly$yearfraction,Droughtseverity_yearly$sum_droughtseverity)
+print(TR_annual_Droughtseverity)
+capture.output(summary(print(TR_annual_Droughtseverity)), file = " Droughtseverity_annual MK test results.txt")
+TR_annual_Droughtseverity$sl
+TR_annual_Droughtseverity$B
+b0<- median(Droughtseverity_yearly$sum_droughtseverity)-(TR_annual_Droughtseverity$B * median(Droughtseverity_yearly$Year))
+Droughtseverity_yearly$overall_slope<- b0+(TR_annual_Droughtseverity$B * Droughtseverity_yearly$Year)
+a1<-as.character(Droughtseverity_yearly$Year[1]) 
+b1<-as.character(Droughtseverity_yearly$Year[length(Droughtseverity_yearly$Year)]) 
+z1<-as.character(lapply(TR_annual_Droughtseverity$B, round,2))
+Droughtseverity_yearly$`Sens Slope`<- paste("a)",a1,"-",b1,":"," ",z1," ","mm/yr",sep='')
+################################################## MKLTP tEST FOR ANNUALL Droughtseverity_yearly
+Droughtseverity_yearly$MKLTP.Sig<-as.numeric (NA)
+Droughtseverity_yearly$Mean<-as.numeric (NA)
+Droughtseverity_yearly$Line<-as.numeric (NA)
+Droughtseverity_yearly$overll_line<-as.numeric (Droughtseverity_yearly$overall_slope)
+Droughtseverity_yearly$Line.pvalue<-as.character(NA)
+Droughtseverity_yearly$Mid_date<-as.Date.numeric(NA)
+Droughtseverity_yearly$mLine<- as.numeric(NA)
+######################################
+Droughtseverity_yearly$Max_date<- as.Date.numeric(NA) 
+Droughtseverity_yearly$ECP<-as.character(NA) 
+Droughtseverity_yearly$Seq_p.value<-as.numeric (NA)
+Droughtseverity_yearly$MKLTP_p.value<-as.numeric (NA)
+#######################################
+myts_Annuall<- ts(Droughtseverity_yearly$sum_droughtseverity, start=c(min(Droughtseverity_yearly$Year)), end=c(max(Droughtseverity_yearly$Year)), frequency=1)
+MKLTP_Annuall_DS<- MannKendallLTP(myts_Annuall)
+Droughtseverity_yearly$MKLTP.Sig<- if (MKLTP_Annuall_DS$Mann_Kendall_LTP[2]>0.01){
+  paste(lapply(MKLTP_Annuall_DS$Mann_Kendall_LTP[2], round,2))} else {0.001}
+Droughtseverity_yearly$Line.pvalue<-if (Droughtseverity_yearly$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",Droughtseverity_yearly$MKLTP.Sig,")", sep = "")} else{NA}
+Droughtseverity_yearly$Mid_date<-min(Droughtseverity_yearly$date)
+############################
+Droughtseverity_yearly$Seq<-as.numeric(CP_Droughtseverity$cluster) 
+max(Droughtseverity_yearly$Seq)
+max(length(Droughtseverity_yearly$Seq))
+ddddddddd<-as.numeric( which(CP_Droughtseverity$cluster == max(CP_Droughtseverity$cluster)))
+Droughtseverity_yearly$Seq[max(ddddddddd)+1]
+jj<-max(ddddddddd)
+JJJ<-as.numeric( length(Droughtseverity_yearly$Seq))
+Droughtseverity_yearly$Seq[max(ddddddddd)+1]
+#Droughtseverity_yearly_dry$Seq<-if (Droughtseverity_yearly_dry$Seq[max(ddddddddd)+1]< Droughtseverity_yearly_dry$Seq[max(ddddddddd)]){ Droughtseverity_yearly_dry$Seq[jj:JJJ]==max(CP_Droughtseverity_yearly_dry$cluster)+1}
+i=Droughtseverity_yearly$Seq[max(ddddddddd)+1]
+Droughtseverity_yearly$Seq[jj:JJJ]<- 
+  if(i < as.numeric(Droughtseverity_yearly$Seq[max(ddddddddd)])) {as.numeric(max(CP_Droughtseverity$cluster)+1)} else{Droughtseverity_yearly$Seq}
+
+################# SUBSET THE DATA BASED ON ecp
+
+#for (i in Droughtseverity_yearly$Seq){  
+# m<- assign(paste("segment_", i, sep = "_"),subset(Droughtseverity_yearly, Seq==i))}
+
+######################################
+Max_Seq_annuall<-max(Droughtseverity_yearly$Seq)
+NNNNN<-plyr::ddply(Droughtseverity_yearly, plyr::.(Seq), function(m){
+  FD<-rkt(m$yearfraction,m$sum_droughtseverity)
+  capture.output(summary(print(FD)), file = " Droughtseverity_annuall MK test results for segments.txt")
+  b0<- median(m$sum_droughtseverity)-(FD$B* median(m$Year))
+  m$overall_slope<- b0+(FD$B*m$Year)
+  a3<-as.character(m$Year[1]) 
+  b3<-as.character(m$Year[length(m$Year)]) 
+  z3<-as.character(lapply(FD$B, round,2))
+  m$`Sens Slope`<- paste( (if (m$Seq==1){"b)"} else if (m$Seq==2){"c)"} else if (m$Seq==3){"d)"} else if (m$Seq==4){"e)"} else if  (m$Seq==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+  m$Max_date<- if (m$Seq< Max_Seq_annuall){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+  m$ECP<- if (m$Seq< Max_Seq_annuall){paste("ECP", m$Seq, sep = "")} else {as.character (NA)}
+  m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+  ###################################
+  myts_Annuall<- ts(m$sum_droughtseverity, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+  MKLTP_Annuall_DS<- MannKendallLTP(myts_Annuall)
+  m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Annuall_DS$Mann_Kendall_LTP[2], round,2),")", sep = "")
+  #########################
+  m$Mid_date<- min(m$date)
+  m$Mean<-as.numeric (mean(m$sum_droughtseverity))
+  m$MKLTP.Sig<- if (MKLTP_Annuall_DS$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Annuall_DS$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+  m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+  m$overll_line<-as.numeric (NA)
+  m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+  ########
+  return(m)
+}
+)
+##view(NNNNN)
+#####################################################################################
+total_Droughtseverity_annuall <- rbind(Droughtseverity_yearly,NNNNN)
+###view(total_Droughtseverity_annuall)
+
+tiff(paste0(" Annual Droughtseverity_trend_change point ",".tiff"),width=2000, height=1500, res = 350)
+annuall_Droughtseverity_trend1<-ggplot(total_Droughtseverity_annuall, aes(x=date, color=`Sens Slope`))+
+  geom_point(aes( y=sum_droughtseverity),size=1)+
+  ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  xlab("Date")+ylab("Drought Severity (mm/yr)")
+
+annuall_Droughtseverity_trend2<-annuall_Droughtseverity_trend1+geom_line(aes(y=overll_line),size=0.8,
+                                                                         linetype= if(total_Droughtseverity_annuall$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+annuall_Droughtseverity_trend2<-annuall_Droughtseverity_trend2+
+  geom_line(aes(y=Line),size=0.8,linetype="twodash")
+annuall_Droughtseverity_trend3<-annuall_Droughtseverity_trend2+geom_line(aes(y=mLine),size=0.8,
+                                                                         linetype= if(total_Droughtseverity_annuall$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})
+################################
+for (i in total_Droughtseverity_annuall$Max_date){
+  annuall_Droughtseverity_trend3  <- annuall_Droughtseverity_trend3+ 
+    geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+}
+
+annuall_Droughtseverity_trend4<-annuall_Droughtseverity_trend3+geom_text(mapping = aes(x = Max_date,
+                                                                                       y = max(sum_droughtseverity),
+                                                                                       label = ECP,
+                                                                                       hjust = 1.5,
+                                                                                       vjust = 1.5),
+                                                                         size=3,
+                                                                         angle=90,
+                                                                         show.legend = FALSE,
+                                                                         data = total_Droughtseverity_annuall)
+
+annuall_Droughtseverity_trend4<- annuall_Droughtseverity_trend4+geom_text(mapping = aes(x = Mid_date,
+                                                                                        y = max(sum_droughtseverity),
+                                                                                        fill=`Sens Slope`,
+                                                                                        label = Line.pvalue,
+                                                                                        hjust =1,
+                                                                                        vjust = 5.5),
+                                                                          size=2.5,
+                                                                          angle=90,
+                                                                          show.legend = FALSE,
+                                                                          data = total_Droughtseverity_annuall)
+annuall_Droughtseverity_trend4
+dev.off()
+###############################
+#################### A divisive hierarchical estimation algorithm for multiple change point analysis
+################### e.divisive ENERGY DIVISIVE for annuall data
+Droughtseverity
+for(i in 1:5){
+  ED_Annuall=e.divisive(X=Droughtseverity,sig.lvl=0.05,R=199,k=NULL,min.size=10,alpha=1)
+  if(ED_Annuall$p.values[1]<=0.05) {
+    print("End of Loop") ;
+    break
+  } else{print("KHHHH")}
+  
+}
+#######################
+Droughtseverity_yearly
+if (max(ED_Annuall$cluster)<2){capture.output(print("No change point"), file = " EDP No Change point for drought severity.txt")} else{
+  Droughtseverity_ED<-Droughtseverity_yearly %>% dplyr::select(1:8)
+  Droughtseverity_ED$Seq_ED<-as.numeric(ED_Annuall$cluster)
+  ####################
+  #################### MKLTP
+  Droughtseverity_ED$MKLTP.Sig<-as.numeric (NA)
+  Droughtseverity_ED$Mean<-as.numeric (NA)
+  Droughtseverity_ED$Line<-as.numeric (NA)
+  Droughtseverity_ED$overll_line<-as.numeric (Droughtseverity_ED$overall_slope)
+  Droughtseverity_ED$Line.pvalue<-as.character(NA)
+  Droughtseverity_ED$mLine<- as.numeric(NA)
+  #####################################
+  Droughtseverity_ED$Max_date_ED<- as.Date.numeric(NA) 
+  Droughtseverity_ED$EDP<-as.character(NA) 
+  Droughtseverity_ED$p.value<-as.numeric (NA)
+  Droughtseverity_ED$Seq_p.value<-as.numeric (NA)
+  Droughtseverity_ED$MKLTP_p.value<-as.numeric (NA)
+  Droughtseverity_ED$Mid_date_ED<-as.Date.numeric(NA)
+  #####################################
+  myts_Annuall_ED<- ts(Droughtseverity_ED$sum_droughtseverity, start=c(min(Droughtseverity_ED$Year)), end=c(max(Droughtseverity_ED$Year)), frequency=1)
+  MKLTP_Annuall_DS_ED<- MannKendallLTP(myts_Annuall_ED)
+  Droughtseverity_ED$MKLTP.Sig<- if (MKLTP_Annuall_DS_ED$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Annuall_DS_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  Droughtseverity_ED$Line.pvalue<-if (Droughtseverity_ED$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",Droughtseverity_ED$MKLTP.Sig,")", sep = "")} else{NA}
+  Droughtseverity_ED$Mid_date_ED<-min(Droughtseverity_ED$date)
+  ####
+  ddddddddd<-as.numeric( which(ED_Annuall$cluster == max(ED_Annuall$cluster)))
+  max(ddddddddd)
+  str(ddddddddd)
+  Droughtseverity_ED$Seq_ED[max(ddddddddd)+1]
+  jj<-max(ddddddddd)
+  JJJ<-as.numeric( length(Droughtseverity_ED$Seq_ED))
+  Droughtseverity_ED$Seq_ED[max(ddddddddd)+1]
+  #Droughtseverity_ED_dry$Seq<-if (Droughtseverity_ED_dry$Seq[max(ddddddddd)+1]< Droughtseverity_ED_dry$Seq[max(ddddddddd)]){ Droughtseverity_ED_dry$Seq[jj:JJJ]==max(CP_Droughtseverity_ED_dry$cluster)+1}
+  i=Droughtseverity_ED$Seq_ED[max(ddddddddd)+1]
+  #Droughtseverity_ED$Seq_ED[jj:JJJ]<- 
+  #if(i < as.numeric(Droughtseverity_ED$Seq_ED[max(ddddddddd)])) {as.numeric(max(ED_Annuall$cluster)+1)} else{Droughtseverity_ED$Seq_ED}
+  #################
+  
+  #for (i in Droughtseverity_ED$Seq){  
+  # m<- assign(paste("segment_", i, sep = "_"),subset(Droughtseverity_ED, Seq==i))}
+  
+  ######################################
+  Max_Seq_ED_annuall<-max(Droughtseverity_ED$Seq_ED)
+  EDPP<-plyr::ddply(Droughtseverity_ED, plyr::.(Seq_ED), function(m){
+    FD<-rkt(m$yearfraction,m$sum_droughtseverity)
+    b0<- median(m$sum_droughtseverity)-(FD$B* median(m$Year))
+    m$overall_slope<- b0+(FD$B*m$Year)
+    length(m$Year)
+    a3<-as.character(m$Year[1]) 
+    b3<-as.character(m$Year[length(m$Year)]) 
+    z3<-as.character(lapply(FD$B, round,2))
+    m$`Sens Slope`<- paste( (if (m$Seq_ED==1){"b)"} else if (m$Seq_ED==2){"c)"} else if (m$Seq_ED==3){"d)"} else if (m$Seq_ED==4){"e)"} else if  (m$Seq_ED==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+    m$Max_date_ED<- if (m$Seq_ED< Max_Seq_ED_annuall){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+    m$p.value<- ED_Annuall$p.values[m$Seq_ED]
+    m$EDP<- if (m$Seq_ED< Max_Seq_ED_annuall){paste("EDP", m$Seq_ED," ","p","(",m$p.value,")", sep = "")} else {as.character (NA)}
+    m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+    m$Mid_date_ED<- median(m$date)
+    #######
+    myts_ED_annual <- ts(m$sum_droughtseverity, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+    MKLTP_Annuall_DS_ED<- MannKendallLTP( myts_ED_annual)
+    m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Annuall_DS_ED$Mann_Kendall_LTP[2], round,2),")", sep = "")
+    #########################
+    m$Mid_date_ED<- min(m$date)
+    m$Mean<-as.numeric (mean(m$sum_droughtseverity))
+    m$MKLTP.Sig<- if (MKLTP_Annuall_DS_ED$Mann_Kendall_LTP[2]>0.01){
+      paste(lapply(MKLTP_Annuall_DS_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+    m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+    m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+    m$overll_line<-as.numeric (NA)
+    m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+    #######################
+    return(m)
+  }
+  )
+  
+  #####################################################################################
+  total_Droughtseverity_annuall_EDP <- rbind(Droughtseverity_ED,EDPP)
+  
+  tiff(paste0(" Annuall drought severity_trend_ EDP change point ",".tiff"),width=2000, height=1500, res = 350)
+  annual_severitytrend_EDP1<-ggplot(total_Droughtseverity_annuall_EDP, aes(x=date,color=`Sens Slope`))+
+    geom_point(aes( y=sum_droughtseverity),size=1) +xlab("Date")+ylab("Drought Severity (mm/yr)")+
+    ggtitle("")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+  annual_severitytrend_EDP2<-annual_severitytrend_EDP1+ geom_line(aes(y=overll_line),size=0.8,
+                                                                  linetype= if(total_Droughtseverity_annuall_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+  annual_severitytrend_EDP3<-annual_severitytrend_EDP2+
+    geom_line(aes(y=Line),size=0.8,linetype="twodash")
+  annual_severitytrend_EDP4<-annual_severitytrend_EDP3+geom_line(aes(y=mLine),size=0.8,
+                                                                 linetype= if(total_Droughtseverity_annuall_EDP$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})
+  #########
+  
+  for (i in total_Droughtseverity_annuall_EDP$Max_date_ED){
+    annual_severitytrend_EDP4  <- annual_severitytrend_EDP4+ 
+      geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+  }
+  
+  annual_severitytrend_EDP4<-annual_severitytrend_EDP4+geom_text(mapping = aes(x = Max_date_ED,
+                                                                               y = max(sum_droughtseverity),
+                                                                               label = EDP,
+                                                                               hjust = 1.5,
+                                                                               vjust = 1.5),
+                                                                 size=3,
+                                                                 angle=90,
+                                                                 show.legend = FALSE,
+                                                                 data = total_Droughtseverity_annuall_EDP)
+  
+  annual_severitytrend_EDP4<- annual_severitytrend_EDP4+geom_text(mapping = aes(x = Mid_date_ED,
+                                                                                y = max(sum_droughtseverity),
+                                                                                label = Line.pvalue,
+                                                                                hjust =1,
+                                                                                vjust = 5.5),
+                                                                  size=2.5,
+                                                                  angle=90,
+                                                                  show.legend = FALSE,
+                                                                  data = total_Droughtseverity_annuall_EDP)
+  annual_severitytrend_EDP4
+}# end of if
+dev.off()
+#######################################
+#######################################
+#####################    disrtribution ANALYSIS
+total_flow_annuall
+total_flow_annuall$Period<- gsub(':.*', "", total_flow_annuall$`Sens Slope`)
+###
+A1<-ggplot(total_flow_annuall, aes(sum_flow, fill=Period, color=Period))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Annuall Flow")+ylab("Density")
+#######total_flow_wet
+total_flow_wet
+total_flow_wet$Period<- gsub(':.*', "", total_flow_wet$`Sens Slope`)
+A2<-ggplot(total_flow_wet, aes(sum_flow, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Wet Flow")+ylab("Density")
+A2
+############### 
+total_flow_dry
+total_flow_dry$Period<- gsub(':.*', "", total_flow_dry$`Sens Slope`)
+A3<- ggplot(total_flow_dry, aes(sum_flow, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Dry Flow")+ylab("Density")
+A3
+############
+tiff(paste0(" Annual_wet_dry season flow Distribution for ECP ",".tiff"),width=2000, height=2500, res = 350)
+p8<-ggarrange(A1,A3,A2, nrow =3, ncol =1, heights = c(10, 10,10),
+              widths =c(0.5) )
+dev.off()
+#################
+############### Annuall Flow EDP
+total_flow_annuall_EDP
+total_flow_annuall_EDP$Period<- gsub(':.*', "", total_flow_annuall_EDP$`Sens Slope`)
+A4<- ggplot(total_flow_annuall_EDP, aes(sum_flow, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Annuall Flow")+ylab("Density")
+
+tiff(paste0(" Annual Flow Distribution for EDP",".tiff"),width=2000, height=2500, res = 350)
+p7<-ggarrange( annual_flowtrend_EDP4,A4, nrow =2, ncol =1, heights = c(30,30),
+               widths =c(0.5) )
+dev.off()
+
+#########################Wet
+total_flow_Wet_EDP
+total_flow_Wet_EDP$Period<- gsub(':.*', "",total_flow_Wet_EDP$`Sens Slope`)
+A5<- ggplot(total_flow_Wet_EDP, aes(sum_flow, fill=Period, color=Period))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Wet Flow")+ylab("Density")
+
+tiff(paste0(" Wet Flow Distribution for EDP",".tiff"),width=2000, height=2500, res = 350)
+p6<-ggarrange(Wet_flowtrend_EDP4,A5, nrow =2, ncol =1, heights = c(30,30),
+              widths =c(0.5) )
+dev.off()
+###############################################
+total_flow_Dry_EDP
+total_flow_Dry_EDP$Period<- gsub(':.*', "",total_flow_Dry_EDP$`Sens Slope`)
+A6<- ggplot(total_flow_Dry_EDP, aes(sum_flow, fill=Period, color=Period))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Dry Flow")+ylab("Density")
+
+tiff(paste0(" Dry flow Distribution for EDP",".tiff"),width=2000, height=2500, res = 350)
+g<-ggarrange(Dry_flowtrend_EDP4,A6, nrow =2, ncol =1, heights = c(30,30),
+             widths =c(0.5) )
+dev.off()
+######################################## Baseflow
+##################### ECP distribution
+total_baseflow_annuall
+total_baseflow_annuall$Period<- gsub(':.*', "", total_baseflow_annuall$`Sens Slope`)
+A7<-ggplot(total_baseflow_annuall, aes(sum_baseflow, fill=Period, color=Period))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Annuall Baseflow")+ylab("Density")
+A7
+#######total_flow_wet
+total_baseflow_wet
+total_baseflow_wet$Period<- gsub(':.*', "", total_baseflow_wet$`Sens Slope`)
+A8<-ggplot(total_baseflow_wet, aes(sum_baseflow, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Wet Baseflow")+ylab("Density")
+A8
+############### 
+total_baseflow_dry
+total_baseflow_dry$Period<- gsub(':.*', "", total_baseflow_dry$`Sens Slope`)
+A9<- ggplot(total_baseflow_dry, aes(sum_baseflow, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Dry Baseflow")+ylab("Density")
+A9
+############
+tiff(paste0(" Annual_wet_dry season baseflow Distribution for ECP ",".tiff"),width=2000, height=2500, res = 350)
+p5<-ggarrange(A7,A9,A8, nrow =3, ncol =1, heights = c(10, 10,10),
+              widths =c(0.5) )
+dev.off()
+#################
+############### Annuall Baseflow EDP
+total_baseflow_annuall_EDP
+total_baseflow_annuall_EDP$Period<- gsub(':.*', "", total_baseflow_annuall_EDP$`Sens Slope`)
+A10<- ggplot(total_baseflow_annuall_EDP, aes(sum_baseflow, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Annuall Baseflow")+ylab("Density")
+
+tiff(paste0(" Annual basefllow Distribution for EDP",".tiff"),width=2000, height=2500, res = 350)
+p4<-ggarrange( annual_baseflowtrend_EDP4,A10, nrow =2, ncol =1, heights = c(30,30),
+               widths =c(0.5) )
+dev.off()
+
+#########################Wet
+total_baseflow_Wet_EDP
+total_baseflow_Wet_EDP$Period<- gsub(':.*', "",total_baseflow_Wet_EDP$`Sens Slope`)
+A11<- ggplot(total_baseflow_Wet_EDP, aes(sum_baseflow, fill=Period, color=Period))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Wet Baseflow")+ylab("Density")
+
+tiff(paste0(" Wet Baseflow Distribution for EDP",".tiff"),width=2000, height=2500, res = 350)
+p3<-ggarrange(Wet_baseflowtrend_EDP4,A11, nrow =2, ncol =1, heights = c(30,30),
+              widths =c(0.5) )
+dev.off()
+###############################################
+total_baseflow_dry_EDP
+total_baseflow_dry_EDP$Period<- gsub(':.*', "",total_baseflow_dry_EDP$`Sens Slope`)
+A12<- ggplot(total_baseflow_dry_EDP, aes(sum_baseflow, fill=Period, color=Period))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Dry Baseflow")+ylab("Density")
+
+tiff(paste0(" Dry baseflow Distribution for EDP",".tiff"),width=2000, height=2500, res = 350)
+p2<-ggarrange(Dry_baseflowtrend_EDP4,A12, nrow =2, ncol =1, heights = c(30,30),
+              widths =c(0.5) )
+dev.off()
+######################################## 
+####################################### Drought distribution analysis
+total_Droughtduration_annuall$`Sens Slope`
+total_Droughtduration_annuall$Period<- gsub(':.*', "", total_Droughtduration_annuall$`Sens Slope`)
+A13<-ggplot(total_Droughtduration_annuall, aes(sum_droughtduration, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Drought Duration")+ylab("Density")
+A13
+tiff(paste0(" Drought duration Distribution for ECP",".tiff"),width=2000, height=2500, res = 350)
+p1<-ggarrange(annuall_Droughtduration_trend4,A13, nrow =2, ncol =1, heights = c(30,30),
+              widths =c(0.5) )
+dev.off()
+###############
+total_Droughtduration_annuall_EDP
+total_Droughtduration_annuall_EDP$Period<- gsub(':.*', "", total_Droughtduration_annuall_EDP$`Sens Slope`)
+A13<-ggplot(total_Droughtduration_annuall_EDP, aes(sum_droughtduration, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Drought Duration")+ylab("Density")
+A14
+tiff(paste0(" Drought duration Distribution for EDP",".tiff"),width=2000, height=2500, res = 350)
+u<-ggarrange(annual_durationtrend_EDP4,A14, nrow =2, ncol =1, heights = c(30,30),
+             widths =c(0.5) )
+dev.off()
+##########
+total_Droughtseverity_annuall
+total_Droughtseverity_annuall$Period<- gsub(':.*', "", total_Droughtseverity_annuall$`Sens Slope`)
+A15<-ggplot(total_Droughtseverity_annuall, aes(sum_droughtseverity, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Drought Severity")+ylab("Density")
+A15
+tiff(paste0(" Drought Severity Distribution for ECP",".tiff"),width=2000, height=2500, res = 350)
+u1<-ggarrange(annuall_Droughtseverity_trend4,A15, nrow =2, ncol =1, heights = c(30,30),
+              widths =c(0.5) )
+dev.off()
+#################
+total_Droughtseverity_annuall_EDP
+total_Droughtseverity_annuall_EDP$Period<- gsub(':.*', "", total_Droughtseverity_annuall_EDP$`Sens Slope`)
+A16<-ggplot(total_Droughtseverity_annuall_EDP, aes(sum_droughtseverity, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Drought Severity")+ylab("Density")
+A16
+tiff(paste0(" Drought Severity Distribution for EDP",".tiff"),width=2000, height=2500, res = 350)
+u2<-ggarrange(annual_severitytrend_EDP4,A16, nrow =2, ncol =1, heights = c(30,30),
+              widths =c(0.5) )
+dev.off()
+######################
+###################### Overall Flow Trend
+###
+tiff(paste0(" Overall Flow trend ",".tiff"),width=3000, height=3000, res = 300)
+v<-ggarrange(Flowmonthly11,annual_flowtrend4,flow_dry4,Dry_flowtrend4,flow_wet4,Wet_flowtrend4,RDW2,annuall_Droughtduration_trend4, nrow =4, 
+             ncol =2 ,labels = c("A", "E","B","F", "C","G","D","H"),
+             heights = c(20,20,20,20),widths =c(10,10))
+dev.off()
+
+###
+tiff(paste0(" Overall Flow trend 1 ",".tiff"),width=3000, height=3000, res = 300)
+v1<-ggarrange(Flowmonthly11,annual_flowtrend4,flow_dry4,Dry_flowtrend4,flow_wet4,Wet_flowtrend4,RDW2, nrow =4, 
+              ncol =2 ,labels = c("A", "E","B","F", "C","G","D"),
+              heights = c(20,20,20,20),widths =c(10,10))
+dev.off()
+####
+###################### Overall Baseflow Trend
+tiff(paste0(" Overall Baseflow trend ",".tiff"),width=3000, height=3000, res = 300)
+v1<-ggarrange(Time_Baseflow11,annualbaseflowtrend4,time_baseflowdry5,Dry_baseflowtrend4,time_baseflowwet5,Wet_baseflowtrend4,RDWB2,annuall_Droughtseverity_trend4, nrow =4, 
+              ncol =2 ,labels = c("A", "E","B","F", "C","G","D","H"),
+              heights = c(20,20,20,20),widths =c(10,10))
+dev.off()
+
+########
+tiff(paste0(" Overall Baseflow trend 1 ",".tiff"),width=3000, height=3000, res = 300)
+v1<-ggarrange(Time_Baseflow11,annualbaseflowtrend4,time_baseflowdry5,Dry_baseflowtrend4,time_baseflowwet5,Wet_baseflowtrend4,RDWB2, nrow =4, 
+              ncol =2 ,labels = c("A", "E","B","F", "C","G","D"),
+              heights = c(20,20,20,20),widths =c(10,10))
+dev.off()
+############################
+########################### Flow
+tiff(paste0(" Annual_wet_dry flow and distribution season trend ",".tiff"),width=3500, height=3000, res = 350)
+f2<-ggarrange(annual_flowtrend4,A1,Dry_flowtrend4,A3, Wet_flowtrend4,A2, 
+              nrow =3, ncol =2,labels = c("A", "D", "B","E", "C","F"),
+              heights = c(10, 10,10),widths =c(0.5,0.5) )
+dev.off()
+
+########################### baseflow
+
+tiff(paste0(" Overall Baseflow Distribution for ECP ",".tiff"),width=3500, height=3000, res = 350)
+v3<-ggarrange(annualbaseflowtrend4,A7,Dry_baseflowtrend4,A9,Wet_baseflowtrend4,A8,
+              nrow =3, ncol =2 ,labels = c("A", "D", "B","E", "C","F"),
+              heights = c(10,10,10),widths =c(0.5,0.5))
+dev.off()
+##########################
+
+########################################
+######################################## how to make nice table.
+
+Pararmeters<- as.character( c("2-sided p-value", "Slope (mm/yr)", "Sig"))
+
+`SMK Annuall`<-c(as.numeric(Tr_flow$sl),as.numeric(Tr_flow$B),if (Tr_flow$sl<= 0.01){"**"} 
+                 else if (Tr_flow$sl<= 0.05){"*"} else{"-"})
+`SMK Wet`<-c(as.numeric(TR_wet_flow$sl),as.numeric(TR_wet_flow$B),if (TR_wet_flow$sl<= 0.01){"**"} 
+             else if (TR_wet_flow$sl<= 0.05){"*"} else{"-"})
+`SMK Dry`<-c(as.numeric(Tr_flow_Dryseason$sl),as.numeric(Tr_flow_Dryseason$B),if (Tr_flow_Dryseason$sl<= 0.01){"**"} 
+             else if (Tr_flow_Dryseason$sl<= 0.05){"*"} else{"-"})
+##########################
+
+`OMKT Annuall`<-c(as.numeric(TR_annual_flow$sl),as.numeric(TR_annual_flow$B),if (TR_annual_flow$sl<= 0.01){"**"} 
+                  else if (TR_annual_flow$sl<= 0.05){"*"} else{"-"})
+`OMKT Wet`<-c(as.numeric(TR_wet_flow$sl),as.numeric(TR_wet_flow$B),if (TR_wet_flow$sl<= 0.01){"**"} 
+              else if (TR_wet_flow$sl<= 0.05){"*"} else{"-"})
+`OMKT Dry`<-c(as.numeric(TR_dry_flow$sl),as.numeric(TR_dry_flow$B),if (TR_dry_flow$sl<= 0.01){"**"} 
+              else if (TR_dry_flow$sl<= 0.05){"*"} else{"-"})
+####################
+`MKLTP Annuall`<-c(as.numeric(MKLTP_Annuall_Flow $Mann_Kendall_LTP[2]),as.numeric(MKLTP_Annuall_Flow$Mann_Kendall[4]),if (MKLTP_Annuall_Flow$Mann_Kendall_LTP[2]<= 0.01){"**"} 
+                   else if (MKLTP_Annuall_Flow$Mann_Kendall_LTP[2]<= 0.05){"*"} else{"-"})
+`MKLTP Wet`<-c(as.numeric(MKLTP_Wet_Flow$Mann_Kendall_LTP[2]),as.numeric(MKLTP_Wet_Flow$Mann_Kendall[4]),if (MKLTP_Wet_Flow$Mann_Kendall_LTP[2]<= 0.01){"**"} 
+               else if (MKLTP_Wet_Flow$Mann_Kendall_LTP[2]<= 0.05){"*"} else{"-"})
+`MKLTP Dry`<-c(as.numeric(MKLTP_Dry_Flow$Mann_Kendall_LTP[2]), as.numeric(MKLTP_Dry_Flow$Mann_Kendall[4]),if (MKLTP_Dry_Flow$Mann_Kendall_LTP[2]<= 0.01){"**"} 
+               else if (MKLTP_Dry_Flow$Mann_Kendall_LTP[2]<= 0.05){"*"} else{"-"})
+####################### Cerating Table
+Table<- data.frame(Pararmeters,`SMK Annuall`, `SMK Wet`,`SMK Dry`,`OMKT Annuall`,`OMKT Wet`,`OMKT Dry`,
+                   `MKLTP Annuall`,`MKLTP Wet`,`MKLTP Dry`)
+#######################################
+MKLT
+Table[] <- lapply(Table, function(x) {
+  x1 <- type.convert(as.character(x), as.is=TRUE)
+  ifelse(grepl("^[0-9.-]+$", x1), round(as.numeric(x1), 3), x1)})
+library(htmltools)
+
+Table1<- formattable(Table,list(
+  Pararmeters= formatter("span", 
+                         style = ~ style(color = "red",font.weight = "bold"))))
+
+saveWidget(as.htmlwidget(Table1), file ="Overall Statistics Table for Flow.html")
+###################################
+################################### Base flow 
+Pararmeters<- as.character( c("2-sided p-value", "Slope (mm/yr)", "Sig"))
+Tr_baseflow
+Tr_Baseflow_Dryseason
+Tr_Baseflow_Wetseason
+`SMK Annuall`<-c(as.numeric( Tr_baseflow$sl),as.numeric( Tr_baseflow$B),if ( Tr_baseflow$sl<= 0.01){"**"} 
+                 else if ( Tr_baseflow$sl<= 0.05){"*"} else{"-"})
+`SMK Wet`<-c(as.numeric(Tr_Baseflow_Wetseason$sl),as.numeric(Tr_Baseflow_Wetseason$B),if (Tr_Baseflow_Wetseason$sl<= 0.01){"**"} 
+             else if (Tr_Baseflow_Wetseason$sl<= 0.05){"*"} else{"-"})
+`SMK Dry`<-c(as.numeric(Tr_Baseflow_Dryseason$sl),as.numeric(Tr_Baseflow_Dryseason$B),if (Tr_Baseflow_Dryseason$sl<= 0.01){"**"} 
+             else if (Tr_Baseflow_Dryseason$sl<= 0.05){"*"} else{"-"})
+##########################
+TR_annual_baseflow
+TR_wet_baseflow
+TR_dry_baseflow
+`OMKT Annuall`<-c(as.numeric(TR_annual_baseflow$sl),as.numeric(TR_annual_baseflow$B),if (TR_annual_baseflow$sl<= 0.01){"**"} 
+                  else if (TR_annual_baseflow$sl<= 0.05){"*"} else{"-"})
+`OMKT Wet`<-c(as.numeric(TR_wet_baseflow$sl),as.numeric(TR_wet_baseflow$B),if (TR_wet_baseflow$sl<= 0.01){"**"} 
+              else if (TR_wet_baseflow$sl<= 0.05){"*"} else{"-"})
+`OMKT Dry`<-c(as.numeric(TR_dry_baseflow$sl),as.numeric(TR_dry_baseflow$B),if (TR_dry_baseflow$sl<= 0.01){"**"} 
+              else if (TR_dry_baseflow$sl<= 0.05){"*"} else{"-"})
+####################
+MKLT
+`MKLTP Annuall`<-c(as.numeric(MKLTP_Annuall_Baseflow$Mann_Kendall_LTP[2]),as.numeric(MKLTP_Annuall_Baseflow$Mann_Kendall[4]),if (MKLTP_Annuall_Baseflow$Mann_Kendall_LTP[2]<= 0.01){"**"} 
+                   else if (MKLTP_Annuall_Baseflow$Mann_Kendall_LTP[2]<= 0.05){"*"} else{"-"})
+`MKLTP Wet`<-c(as.numeric(MKLTP_Wet_Baseflow$Mann_Kendall_LTP[2]),as.numeric(MKLTP_Wet_Baseflow$Mann_Kendall[4]),if (MKLTP_Wet_Baseflow$Mann_Kendall_LTP[2]<= 0.01){"**"} 
+               else if (MKLTP_Wet_Baseflow$Mann_Kendall_LTP[2]<= 0.05){"*"} else{"-"})
+`MKLTP Dry`<-c(as.numeric(MKLTP_Dry_Baseflow$Mann_Kendall_LTP[2]), as.numeric(MKLTP_Dry_Baseflow$Mann_Kendall[4]),if (MKLTP_Dry_Baseflow$Mann_Kendall_LTP[2]<= 0.01){"**"} 
+               else if (MKLTP_Dry_Baseflow$Mann_Kendall_LTP[2]<= 0.05){"*"} else{"-"})
+####################### Cerating Table
+Table3<- data.frame(Pararmeters,`SMK Annuall`, `SMK Wet`,`SMK Dry`,`OMKT Annuall`,`OMKT Wet`,`OMKT Dry`,
+                    `MKLTP Annuall`,`MKLTP Wet`,`MKLTP Dry`)
+#######################################
+
+Table3[] <- lapply(Table3, function(x) {
+  x1 <- type.convert(as.character(x), as.is=TRUE)
+  ifelse(grepl("^[0-9.-]+$", x1), round(as.numeric(x1), 3), x1)})
+library(htmltools)
+
+Table4<- formattable(Table3,list(
+  Pararmeters= formatter("span", 
+                         style = ~ style(color = "red",font.weight = "bold"))))
+
+saveWidget(as.htmlwidget(Table4), file ="Overall Statistics Table for baseflow.html")
+###################################
+
+#FDC Flow Duration Curve
+Flow
+#Qdat<-Flow_FDC
+#Qdat$Date<- Flow$date
+Qdat<-Flow
+Qdat$Q<-Qdat$Q_GL
+Qdat$Date<- Qdat$date
+#Qdat <- Qdat %>%
+ # mutate(year = year(Date)) %>%
+  #mutate(period = case_when( year <= 1980 ~ "1970-1980",
+                             #year > 1980 & year <= 2000 ~ "1980-2000",
+                            # year > 2000 ~ "2000-2019"))
+Qdat <- Qdat %>%
+ mutate(year = year(Date)) %>%
+   mutate(Period = case_when( year <= 1989 ~ "1960-1989",
+        year > 1989~ "1990-2019"))
+
+Qdat <- Qdat %>%
+  group_by(Period) %>%
+  mutate(rank = rank(-Q)) %>% 
+  mutate(P = 100 * (rank / (length(Q) + 1)))
+#V<- Qdat [Qdat$Q != 0, ]
+Qdat<-V
+
+FM<- as.character("High Flows")
+my_text <- FM
+my_grob = grid.text(my_text, x=0.15,  y=0.9, gp=gpar(col="black", fontsize=7, fontface="bold"))
+########
+FM1<- as.character("Mid-range Flows")
+my_text1 <- FM1
+my_grob1 = grid.text(my_text1, x=0.55,  y=0.9, gp=gpar(col="black", fontsize=7, fontface="bold"))
+#########
+FM2<- as.character("Low Flows")
+my_text2 <- FM2
+my_grob2 = grid.text(my_text2, x=0.90,  y=0.9, gp=gpar(col="black", fontsize=7, fontface="bold"))
+########################################
+tiff(paste0("Flow Duration Curve",".tiff"),width=2000, height=1500, res = 350)
+FDC<- Qdat %>% ggplot(aes(x = P, y = Q, color = Period))+
+  geom_line()+
+  scale_y_log10()+
+  geom_vline(aes(xintercept = 80),size = 0.7,color= "black",linetype="dashed")+
+  geom_vline(aes(xintercept = 20),size = 0.7,color= "black",linetype="dashed")+
+  annotation_custom(my_grob)+annotation_custom(my_grob1)+annotation_custom(my_grob2)+
+  xlab("% Time flow equalled or exceeded")+
+  ylab("Runoff (mm/day)")+theme_bw()
+
+FDC
+dev.off()
+
+
+tiff(paste0(" Overall Flow trend_FDC ",".tiff"),width=3000, height=3000, res = 300)
+FDC1<-ggarrange(Flowmonthly11,annual_flowtrend4,flow_dry4,Dry_flowtrend4,flow_wet4,Wet_flowtrend4,FDC,annuall_Droughtduration_trend4, nrow =4, 
+             ncol =2 ,labels = c("A", "E","B","F", "C","G","D","H"),
+             heights = c(20,20,20,20),widths =c(10,10))
+dev.off()
+################
+#rm(list=ls())
