@@ -1,0 +1,1420 @@
+library(scales)
+library(plotrix)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(ggpubr)
+library(tibble)
+library(rlang)
+library(gridExtra)
+library(egg)
+library(grid)
+library(readxl)
+library(hrbrthemes)
+library(viridis)
+library(readr)
+library(xts)
+library(rkt)
+library(trend)
+library(tidyverse)
+library(boot)
+library(bcp)
+library(ecp)
+library(plotrix)
+library(data.table)
+library(HKprocess)
+####
+#library(scPDSI)
+library(SPEI)
+library(SCI)
+library(DT)
+library(data.table)
+library(formattable)
+library(plyr)
+
+########################## select your directory, an example of rainfall data exists on the https://github.com/AquaticEcoDynamics/aed_r_datatools.
+setwd("C:/Users/....")
+files <- list.files(path= "C:/Users/....",pattern = ".csv")
+temp <- lapply(files, fread, sep=",")
+PRCP <- rbindlist( temp )
+summary(PRCP)
+PRCP[is.na(PRCP)] = 0
+######
+PRCP$date<- paste(PRCP$Year,"-",PRCP$Month,"-",PRCP$Day,sep='')
+PRCP<-PRCP %>% dplyr::select(6,9)
+colnames(PRCP) <- c("PRCP","date")
+summary(PRCP)
+#############
+################## Sum Rainfall based on month and year
+ts_PRCP<- xts(PRCP$PRCP, as.Date(PRCP$date, "%Y-%m-%d"))
+str(ts_PRCP)
+# convert daily data to annual and monthly
+ts_m_PRCP = apply.monthly(ts_PRCP, sum)
+ts_y_PRCP = apply.yearly(ts_PRCP, sum)
+##ts_q = apply.quarterly(ts, sum)
+ts_m_f=data.frame(PRCP=coredata(ts_m_PRCP),date=index(ts_m_PRCP))
+ts_y_f=data.frame(PRCP=coredata(ts_y_PRCP),date=index(ts_y_PRCP))
+library(lubridate)
+PRCP_monthly = ts_m_f %>% 
+  mutate(date = ymd(date)) %>% 
+  mutate_at(vars(date), funs(year, month, day))
+PRCP_yearly = ts_y_f %>% 
+  mutate(date = ymd(date)) %>% 
+  mutate_at(vars(date), funs(year, month, day))
+colnames(PRCP_monthly) <- c("PRCP","date","YEAR","MONTH","Day")
+colnames(PRCP_yearly) <- c("PRCP","date","YEAR","MONTH","Day")
+##############################
+#names(PRCP)<- PRCP_monthly
+######viewPRCP)
+PRCP3<-PRCP_monthly
+PRCP4<- PRCP_monthly
+attach(PRCP_monthly)
+PRCP<-PRCP_monthly
+names(PRCP)
+str(PRCP)
+summary(PRCP)
+######################### Calculation of SPI 
+# Convert to a ts (time series) object for convenience
+PRCP <- ts(PRCP, end=c(2019,12), frequency=12)
+spi_1 <- spi(PRCP[,'PRCP'], 1)
+spi_12 <- spi(PRCP[,'PRCP'], 12)
+spi_6 <- spi(PRCP[,'PRCP'], 6)
+spi_24 <- spi(PRCP[,'PRCP'], 24)
+tiff(paste0(" SPI ",".tiff"),width=1500, height=1000, res = 300)
+par(mfrow=c(2,2))
+plot(spi_1, 'PRCP, SPI-1')
+plot(spi_12, 'PRCP, SPI-12')
+plot(spi_6, 'PRCP, SPI-6')
+plot(spi_24, 'PRCP, SPI-24')
+dev.off()
+##########
+tiff(paste0(" SPI-24 ",".tiff"),width=1500, height=1000, res = 300)
+par(mfrow=c(1,1))
+plot(spi_24, 'PRCP, SPI-24')
+dev.off()
+######################
+############################################## monthly SMK and partial SMK test for Rainfall
+Tr_Rainfall<-rkt(PRCP3$YEAR,PRCP3$PRCP,PRCP3$MONTH,,TRUE)
+print(Tr_Rainfall)
+capture.output(summary(print(Tr_Rainfall)), file = " Rainfall SMK test results.txt")
+########## Change point detection using Lanzante? test
+str(PRCP3)
+Rainfall_monthly <-ts(PRCP3[, 1], start = c(PRCP3$YEAR[1], PRCP3$MONTH[1]),end=c(PRCP3$YEAR[length(PRCP3$YEAR)],PRCP3$MONTH[length(PRCP3$MONTH)]), frequency = 12)
+tiff(paste0(" Rainfall_monthly_Change point ",".tiff"),width=1500, height=1000, res = 300)
+plot(Rainfall_monthly)
+s.res <- lanzante.test( Rainfall_monthly)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( Rainfall_monthly[1:i])
+s.2 <- mean( Rainfall_monthly[(i+1):n])
+s <- ts(c(rep(s.1,i), rep(s.2,(n-i))))
+tsp(s) <- tsp( Rainfall_monthly)
+lines(s, col=2,lty=1)
+print(s.res)
+dev.off()
+############################CDFM for monthly Annual data
+PRCP1<-PRCP3
+PRCP1$Date<-PRCP1$date
+PRCP5<-PRCP1
+Mean<- mean(PRCP5$PRCP)
+PRCP5$Pi=((PRCP1$PRCP-Mean)/12)
+PRCP5$CDFM<- cumsum(PRCP5$Pi) # replace the cell freq.s by cumulative freq.s
+#################################################################################
+######### Plotting CDFM
+lims<- c(min= as.Date(min(PRCP5$Date)), max= as.Date(max(PRCP5$Date)))
+Time_1<-ggplot(PRCP5)+geom_line( aes(x=Date, y=PRCP),color= "grey")
+time_2<-Time_1+geom_line(aes(x=Date, y=CDFM),alpha = 0.6, size = 0.7,color= "blue")
+Time_3<-time_2+geom_smooth(aes(x=Date, y=CDFM),color="red")+xlab("Date")+ylab("Rainfall (mm/month)")
+Time_4<-Time_3+scale_y_continuous(sec.axis = sec_axis(name ="CDFM (mm)",~ . + 0))
+Time_5<- Time_4 
+Time_5
+dev.off()
+#########################################
+#################################### monthly rainfall
+s.res <- lanzante.test( PRCP5$PRCP)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( PRCP5$PRCP[1:i])
+s.2 <- mean( PRCP5$PRCP[(i+1):n])
+sm<- ts(c(rep(s.1,i), rep(s.2,(n-i))))
+sm<-as.data.frame(as.numeric(sm))
+PRCP5$sm<-sm$`as.numeric(sm)`
+p_value <- s.res$p.value
+str(p_value)
+hh<- if(p_value > 0.05){print("LAT (p>0.05)")} else if(p_value > 0.01 & p_value < 0.05){print("LAT (p<0.05)")} else{print("LAT (p<0.01)")}
+my_text <- hh
+my_grob = grid.text(my_text, x=0.68,  y=0.9, gp=gpar(col="black", fontsize=7, fontface="bold"))
+year=PRCP5[i,6]
+
+time_10<-Time_5+geom_line(aes(x=Date,y=PRCP5$sm),colour="black")
+time_11<-time_10+ggtitle("Annual")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+ 
+  geom_vline(aes(xintercept = year),size = 0.7,color= "black",linetype="dashed")+
+  annotation_custom(my_grob, xmin = as.Date(max(year,100)), xmax = as.Date(max(year,100)), ymin =max(PRCP5$PRCP), ymax = max(PRCP5$PRCP))
+
+tiff(paste0(" CDFM annual rainfall ",".tiff"),width=1500, height=1000, res = 300)
+time_11
+dev.off()
+###################################
+################################## Orginal mann-kendal test (OMK test)
+ts <- xts(PRCP1$PRCP, as.Date(PRCP1$Date, "%Y-%m-%d"))
+# convert daily data
+ts_y = apply.yearly(ts, sum)
+################################# ANNUAL RAINFALL OMK TEST
+
+ts_y_a= data.frame(sum_rainfall=coredata(ts_y),date=index(ts_y))
+
+rainfall<- data.frame(date = ts_y_a$date,
+                      Year = as.numeric(format(ts_y_a$date, format = "%Y")),
+                      Month = as.numeric(format(ts_y_a$date, format = "%m")),
+                      Day = as.numeric(format(ts_y_a$date, format = "%d")))
+rainfall$sum_rainfall<-ts_y_a$sum_rainfall
+rainfall$yearfraction<-(rainfall$Year+0.110)
+##################
+################## ECP change point detection
+Rainfall_annuall<-rainfall %>% dplyr::select(5)
+Rainfall_annuall<- as.matrix(Rainfall_annuall)
+x1= rep(c(min(rainfall$Year):max(rainfall$Year)), times= c(1))
+##################################### member function
+n=length(rainfall$date)
+num=1
+mem <- vector()
+
+while (n>20) {
+  
+  x= rep(c(num), times= c(20))
+  
+  n=n-20
+  
+  num=num+1
+  
+  mem <- append(mem, x)
+  
+}
+
+x= rep(c(num), times= c(n))
+
+mem <- append(mem, x)
+
+print(mem)
+
+##################  e.agglo CHANGE POINT DETECTION (ecp) TEST
+CP_Rainfall= e.agglo(Rainfall_annuall,member=mem,alpha=1,penalty=function(cp,Xts) 0)
+par(mfrow=c(1,1))
+tiff(paste0(" ECP change point for annual rainfall ",".tiff"),width=1500, height=1000, res = 300)
+CP_Rainfall$progression
+#plot(CP_Rainfall$cluster)
+plot(x1, CP_Rainfall$cluster,
+     main="ECP test annual rainfall",
+     xlab = "Year",
+     ylab="cluster",
+     type="p",
+     col="blue")
+dev.off()
+
+#####################################
+##################################### OMK test for ANNUAL rainfall
+TR_annual_rainfall<-rkt(rainfall$yearfraction,rainfall$sum_rainfall)
+print(TR_annual_rainfall)
+capture.output(summary(print(TR_annual_rainfall)), file = " rainfall_annual MK test results.txt")
+TR_annual_rainfall$sl
+TR_annual_rainfall$B
+b0<- median(rainfall$sum_rainfall)-(TR_annual_rainfall$B * median(rainfall$Year))
+rainfall$overall_slope<- b0+(TR_annual_rainfall$B * rainfall$Year)
+a1<-as.character(rainfall$Year[1]) 
+b1<-as.character(rainfall$Year[length(rainfall$Year)]) 
+z1<-as.character(lapply(TR_annual_rainfall$B, round,2))
+rainfall$`Sens Slope`<- paste("a)",a1,"-",b1,":"," ",z1," ","mm/yr",sep='')
+################################################## MKLTP tEST FOR Annual RAINFALL
+rainfall$MKLTP.Sig<-as.numeric (NA)
+rainfall$Mean<-as.numeric (NA)
+rainfall$Line<-as.numeric (NA)
+rainfall$overll_line<-as.numeric (rainfall$overall_slope)
+rainfall$Line.pvalue<-as.character(NA)
+str(rainfall$Line.pvalue)
+rainfall$Mid_date<-as.Date.numeric(NA)
+rainfall$mLine<- as.numeric(NA)
+######################################
+rainfall$Max_date<- as.Date.numeric(NA) 
+rainfall$ECP<-as.character(NA) 
+rainfall$Seq_p.value<-as.numeric (NA)
+rainfall$MKLTP_p.value<-as.numeric (NA)
+#######################################
+myts_Annuall<- ts(rainfall$sum_rainfall, start=c(min(rainfall$Year)), end=c(max(rainfall$Year)), frequency=1)
+MKLTP_Annuall<- MannKendallLTP(myts_Annuall)
+rainfall$MKLTP.Sig<- if (MKLTP_Annuall$Mann_Kendall_LTP[2]>0.05){
+  paste(lapply(MKLTP_Annuall$Mann_Kendall_LTP[2], round,2))} else {0.001}
+rainfall$MKLTP.Sig<-as.numeric(rainfall$MKLTP.Sig)
+
+#rainfall$Line.pvalue<- if(rainfall$MKLTP.Sig<=0.050) {paste("MKLTP"," ","p","(",rainfall$MKLTP.Sig,")", sep = "")}  else {NA}
+rainfall$Line.pvalue<-ifelse(rainfall$MKLTP.Sig<=0.050, paste("MKLTP"," ","p","(",rainfall$MKLTP.Sig,")", sep = ""), NA)
+rainfall$Mid_date<-min(rainfall$date)
+############################
+rainfall$Seq<-as.numeric(CP_Rainfall$cluster) 
+max(rainfall$Seq)
+max(length(rainfall$Seq))
+ddddddddd<-as.numeric( which(CP_Rainfall$cluster == max(CP_Rainfall$cluster)))
+rainfall$Seq[max(ddddddddd)+1]
+jj<-max(ddddddddd)
+JJJ<-as.numeric( length(rainfall$Seq))
+rainfall$Seq[max(ddddddddd)+1]
+#rainfall_dry$Seq<-if (rainfall_dry$Seq[max(ddddddddd)+1]< rainfall_dry$Seq[max(ddddddddd)]){ rainfall_dry$Seq[jj:JJJ]==max(CP_Rainfall_dry$cluster)+1}
+#i<- rainfall$Seq[max(ddddddddd)+1]
+
+#if(is.na(i)){
+
+#} else {
+ # if(i < as.numeric(rainfall$Seq[max(ddddddddd)])) {
+    #rainfall$Seq[jj:JJJ]<- as.numeric(max(CP_Rainfall$cluster)+1)
+ # } else{
+ #   rainfall$Seq[jj:JJJ]<-  rainfall$Seq
+  #}
+  
+#}
+
+  
+
+################# SUBSET THE DATA BASED ON ecp
+str(rainfall$Seq)
+######################################
+Max_Seq_annuall<-max(rainfall$Seq)
+NNNNN<-plyr::ddply(rainfall, plyr::.(Seq), function(m){
+  #FD<-rkt(m$Year,m$sum_rainfall,m$Month,,TRUE)
+  FD<-rkt(m$yearfraction,m$sum_rainfall)
+  capture.output(summary(print(FD)), file = " Rainfall MK test results for segments.txt")
+  b0<- median(m$sum_rainfall)-(FD$B* median(m$Year))
+  m$overall_slope<- b0+(FD$B*m$Year)
+  a3<-as.character(m$Year[1]) 
+  b3<-as.character(m$Year[length(m$Year)]) 
+  z3<-as.character(lapply(FD$B, round,2))
+  m$`Sens Slope`<- paste((if (m$Seq==1){paste("b)")} else if (m$Seq==2){paste("c)")} else if (m$Seq==3){paste("d)")} else if (m$Seq==4){paste("e)")} else if  (m$Seq==5){paste("f)")} else {paste("g)")}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep="")
+  m$Max_date<- if (m$Seq< Max_Seq_annuall){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+  m$ECP<- if (m$Seq< Max_Seq_annuall){paste("ECP", m$Seq, sep = "")} else {as.character (NA)}
+  m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+  ###################################
+  myts_Annuall<- ts(m$sum_rainfall, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+  MKLTP_Annuall<- MannKendallLTP(myts_Annuall)
+  m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Annuall$Mann_Kendall_LTP[2], round,2),")", sep = "")
+  #########################
+  m$Mid_date<- min(m$date)
+  m$Mean<-as.numeric (mean(m$sum_rainfall))
+  m$MKLTP.Sig<- if (MKLTP_Annuall$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Annuall$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+  m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+  m$overll_line<-as.numeric (NA)
+  m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+  ########
+  return(m)
+}
+)
+###view(NNNNN)
+#####################################################################################
+total_rainfall_annuall <- rbind(rainfall,NNNNN)
+####view(total_rainfall_annuall)
+
+tiff(paste0(" Annual_trend_change point ",".tiff"),width=2000, height=1500, res = 350)
+annual_rainfalltrend1<-ggplot(total_rainfall_annuall, aes(x=date, color=`Sens Slope`))+
+  geom_point(aes( y=sum_rainfall),size=1)+
+  ggtitle("Annual Trend")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  xlab("Date")+ylab("Rainfall (mm/year)")
+
+annual_rainfalltrend2<-annual_rainfalltrend1+geom_line(aes(y=overll_line),size=0.8,
+                                                       linetype= if(total_rainfall_annuall$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+
+annual_rainfalltrend2<-annual_rainfalltrend2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+
+annual_rainfalltrend3<-annual_rainfalltrend2+geom_line(aes(y=mLine),size=0.8,
+                                                       linetype= if(total_rainfall_annuall$MKLTP.Sig<= 0.05){"solid"} else {"twodash"})
+################################
+for (i in total_rainfall_annuall$Max_date){
+  annual_rainfalltrend3  <- annual_rainfalltrend3+ 
+    geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+}
+
+annual_rainfalltrend4<-annual_rainfalltrend3+geom_text(mapping = aes(x = Max_date,
+                                                                     y = max(sum_rainfall),
+                                                                     label = ECP,
+                                                                     hjust = 1.5,
+                                                                     vjust = 1.5),
+                                                       size=3,
+                                                       angle=90,
+                                                       show.legend = FALSE,
+                                                       data = total_rainfall_annuall)
+
+annual_rainfalltrend4<- annual_rainfalltrend4+geom_text(mapping = aes(x = Mid_date,
+                                                                      y = max(sum_rainfall),
+                                                                      fill=`Sens Slope`,
+                                                                      label = Line.pvalue,
+                                                                      hjust =1,
+                                                                      vjust = 5.5),
+                                                        size=2.5,
+                                                        angle=90,
+                                                        show.legend = FALSE,
+                                                        data = total_rainfall_annuall)
+annual_rainfalltrend4
+dev.off()
+
+
+#################### A divisive hierarchical estimation algorithm for multiple change point analysis
+################### e.divisive ENERGY DIVISIVE for annuall data
+
+for(i in 1:5){
+  ED_Annuall=e.divisive(X=Rainfall_annuall,sig.lvl=0.05,R=199,k=NULL,min.size=20,alpha=1)
+  if(ED_Annuall$p.values[1]<=0.05) {
+    print("End of Loop") ;
+    break
+  } else{"KHHHH"}
+  
+}
+#######################
+if (max(ED_Annuall$cluster)<2){capture.output(print("No change point"), file = " EDP No Change point for Annual rainfall.txt")} else{
+  rainfall_ED<-rainfall %>% dplyr::select(1:8)
+  rainfall_ED$Seq_ED<-as.numeric(ED_Annuall$cluster)
+  ####################
+  #################### MKLTP
+  rainfall_ED$MKLTP.Sig<-as.numeric (NA)
+  rainfall_ED$Mean<-as.numeric (NA)
+  rainfall_ED$Line<-as.numeric (NA)
+  rainfall_ED$overll_line<-as.numeric (rainfall_ED$overall_slope)
+  rainfall_ED$Line.pvalue<-as.character(NA)
+  rainfall_ED$mLine<- as.numeric(NA)
+  #####################################
+  rainfall_ED$Max_date_ED<- as.Date.numeric(NA) 
+  rainfall_ED$EDP<-as.character(NA) 
+  rainfall_ED$p.value<-as.numeric (NA)
+  rainfall_ED$Seq_p.value<-as.numeric (NA)
+  rainfall_ED$MKLTP_p.value<-as.numeric (NA)
+  rainfall_ED$Mid_date_ED<-as.Date.numeric(NA)
+  #####################################
+  myts_Annuall_ED<- ts(rainfall_ED$sum_rainfall, start=c(min(rainfall_ED$Year)), end=c(max(rainfall_ED$Year)), frequency=1)
+  MKLTP_Annuall_ED<- MannKendallLTP(myts_Annuall_ED)
+  rainfall_ED$MKLTP.Sig<- if (MKLTP_Annuall_ED$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Annuall_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  rainfall_ED$Line.pvalue<-if (rainfall_ED$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",rainfall_ED$MKLTP.Sig,")", sep = "")} else{NA}
+  rainfall_ED$Mid_date_ED<-min(rainfall_ED$date)
+  ####
+  ddddddddd<-as.numeric( which(ED_Annuall$cluster == max(ED_Annuall$cluster)))
+  max(ddddddddd)
+  str(ddddddddd)
+  rainfall_ED$Seq_ED[max(ddddddddd)+1]
+  jj<-max(ddddddddd)
+  JJJ<-as.numeric( length(rainfall_ED$Seq_ED))
+  rainfall_ED$Seq_ED[max(ddddddddd)+1]
+  #rainfall_ED_dry$Seq<-if (rainfall_ED_dry$Seq[max(ddddddddd)+1]< rainfall_ED_dry$Seq[max(ddddddddd)]){ rainfall_ED_dry$Seq[jj:JJJ]==max(CP_rainfall_ED_dry$cluster)+1}
+  i=rainfall_ED$Seq_ED[max(ddddddddd)+1]
+  #rainfall_ED$Seq_ED[jj:JJJ]<- 
+  #if(i < as.numeric(rainfall_ED$Seq_ED[max(ddddddddd)])) {as.numeric(max(ED_Annuall$cluster)+1)} else{rainfall_ED$Seq_ED}
+  #################
+  
+  #for (i in rainfall_ED$Seq){  
+  # m<- assign(paste("segment_", i, sep = "_"),subset(rainfall_ED, Seq==i))}
+  
+  ######################################
+  Max_Seq_ED_annuall<-max(rainfall_ED$Seq_ED)
+  EDPP<-plyr::ddply(rainfall_ED, plyr::.(Seq_ED), function(m){
+    FD<-rkt(m$yearfraction,m$sum_rainfall)
+    print(FD)
+    FD$B
+    b0<- median(m$sum_rainfall)-(FD$B* median(m$Year))
+    m$overall_slope<- b0+(FD$B*m$Year)
+    length(m$Year)
+    a3<-as.character(m$Year[1]) 
+    b3<-as.character(m$Year[length(m$Year)]) 
+    z3<-as.character(lapply(FD$B, round,2))
+    m$`Sens Slope`<- paste( (if (m$Seq_ED==1){"b)"} else if (m$Seq_ED==2){"c)"} else if (m$Seq_ED==3){"d)"} else if (m$Seq_ED==4){"e)"} else if  (m$Seq_ED==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+    m$Max_date_ED<- if (m$Seq_ED< Max_Seq_ED_annuall){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+    m$p.value<- ED_Annuall$p.values[m$Seq_ED]
+    m$EDP<- if (m$Seq_ED< Max_Seq_ED_annuall){paste("EDP", m$Seq_ED," ","p","(",m$p.value,")", sep = "")} else {as.character (NA)}
+    m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+    m$Mid_date_ED<- median(m$date)
+    #######
+    myts_ED_annual <- ts(m$sum_rainfall, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+    MKLTP_Annuall_ED<- MannKendallLTP( myts_ED_annual)
+    m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Annuall_ED$Mann_Kendall_LTP[2], round,2),")", sep = "")
+    #########################
+    m$Mid_date_ED<- min(m$date)
+    m$Mean<-as.numeric (mean(m$sum_rainfall))
+    m$MKLTP.Sig<- if (MKLTP_Annuall_ED$Mann_Kendall_LTP[2]>0.01){
+      paste(lapply(MKLTP_Annuall_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+    m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+    m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+    m$overll_line<-as.numeric (NA)
+    m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+    #######################
+    return(m)
+  }
+  )
+  
+  #####################################################################################
+  total_rainfall_annuall_EDP <- rbind(rainfall_ED,EDPP)
+  
+  tiff(paste0(" Annual_trend_ EDP change point ",".tiff"),width=2000, height=1500, res = 350)
+  annual_rainfalltrend_EDP1<-ggplot(total_rainfall_annuall_EDP, aes(x=date,color=`Sens Slope`))+
+    geom_point(aes( y=sum_rainfall),size=1) +xlab("Date")+ylab("Rainfall (mm/year)")+
+    ggtitle("Annual Trend")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+  annual_rainfalltrend_EDP2<-annual_rainfalltrend_EDP1+ geom_line(aes(y=overll_line),size=0.8,
+                                                                  linetype= if(total_rainfall_annuall_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+  annual_rainfalltrend_EDP3<-annual_rainfalltrend_EDP2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+  annual_rainfalltrend_EDP4<-annual_rainfalltrend_EDP3+geom_line(aes(y=mLine),size=0.8,
+                                                                 linetype= if(total_rainfall_annuall_EDP$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})
+  #########
+  
+  for (i in total_rainfall_annuall_EDP$Max_date_ED){
+    annual_rainfalltrend_EDP4  <- annual_rainfalltrend_EDP4+ 
+      geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+  }
+  
+  annual_rainfalltrend_EDP4<-annual_rainfalltrend_EDP4+geom_text(mapping = aes(x = Max_date_ED,
+                                                                               y = max(sum_rainfall),
+                                                                               label = EDP,
+                                                                               hjust = 1.5,
+                                                                               vjust = 1.5),
+                                                                 size=3,
+                                                                 angle=90,
+                                                                 show.legend = FALSE,
+                                                                 data = total_rainfall_annuall_EDP)
+  
+  annual_rainfalltrend_EDP4<- annual_rainfalltrend_EDP4+geom_text(mapping = aes(x = Mid_date_ED,
+                                                                                y = max(sum_rainfall),
+                                                                                label = Line.pvalue,
+                                                                                hjust =1,
+                                                                                vjust = 5.5),
+                                                                  size=2.5,
+                                                                  angle=90,
+                                                                  show.legend = FALSE,
+                                                                  data = total_rainfall_annuall_EDP)
+  annual_rainfalltrend_EDP4
+}# end of if
+dev.off()
+######################################
+###################################### SEASONAL SMK TEST
+season<- PRCP3 %>%
+  mutate(
+    season = case_when(
+      MONTH %in% 5:10 ~ "Wet",
+      MONTH %in%  11:12  ~ "Dry",
+      MONTH %in%  1:4  ~ "Dry"))
+season_wet <- subset(season, season %in% c("Wet"))
+season_dry <- subset(season, season %in% c("Dry"))
+#write.csv(season_dry,file = "season_dry.csv")
+#write.csv(season_wet,file = "season_wet.csv")
+###################### SMK test for wet and dry season
+Tr_Dryseason<-rkt(season_dry$YEAR,season_dry$PRCP,season_dry$MONTH,,TRUE)
+print(Tr_Dryseason)
+capture.output(summary(print(Tr_Dryseason)), file = " rainfall_dryseason SMK test results.txt")
+
+Tr_Wetseason<-rkt(season_wet$YEAR,season_wet$PRCP,season_wet$MONTH,,TRUE)
+print(Tr_Wetseason)
+capture.output(summary(print(Tr_Wetseason)), file = " rainfall_Wetseason SMK test results.txt")
+#################################
+#############Change point detection Lanzante’s TEST for wet and dry season
+######dry season
+
+tiff(paste0(" rainfall_dryseason_Lanzante’s Change point ",".tiff"),width=1500, height=1000, res = 300)
+par(mfrow=c(1,1))
+plot(season_dry$YEAR,season_dry$PRCP)
+s.res <- lanzante.test(season_dry$PRCP)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( season_dry$PRCP[1:i])
+s.2 <- mean(season_dry$PRCP[(i+1):n])
+s <-(c(rep(s.1,i), rep(s.2,(n-i))))
+lines(season_dry$YEAR, s, col=2,lty=1)
+print(s.res)
+dev.off()
+############################### wet season
+tiff(paste0(" rainfall_wetseason_Lanzante’s Change point ",".tiff"),width=1500, height=1000, res = 300)
+par(mfrow=c(1,1))
+plot(season_wet$YEAR,season_wet$PRCP)
+s.res <- lanzante.test(season_wet$PRCP)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( season_wet$PRCP[1:i])
+s.2 <- mean(season_wet$PRCP[(i+1):n])
+s <-(c(rep(s.1,i), rep(s.2,(n-i))))
+lines(season_wet$YEAR, s, col=2,lty=1)
+print(s.res)
+dev.off()
+################################# CDFM for seasonal data 
+################################
+season1<- PRCP5 %>%
+  mutate(
+    season1 = case_when(
+      MONTH %in% 5:10 ~ "Wet",
+      MONTH %in%  11:12  ~ "Dry",
+      MONTH %in%  1:4  ~ "Dry"))
+season_wet1 <- subset(season1, season1 %in% c("Wet"))
+season_dry1 <- subset(season1, season1 %in% c("Dry"))
+Mean_dry<- mean(season_dry1$PRCP)
+season_dry1$pi_dry=((season_dry1$PRCP-Mean_dry)/6)
+season_dry1$CDFM_dry<- cumsum(season_dry1$pi_dry) # replace the cell freq.s by cumulative freq.s
+## wet
+Mean_wet<- mean(season_wet1$PRCP)
+season_wet1$pi_wet=((season_wet1$PRCP-Mean_wet)/6)
+season_wet1$CDFM_wet<- cumsum(season_wet1$pi_wet) 
+###############  dry monthly lAN TEST
+s.res <- lanzante.test(season_dry1$PRCP)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( season_dry1$PRCP[1:i])
+s.2 <- mean(season_dry1$PRCP[(i+1):n])
+sd <-(c(rep(s.1,i), rep(s.2,(n-i))))
+sd<-as.data.frame(as.numeric(sd))
+season_dry1$sd<-sd$`as.numeric(sd)`
+p_value <- s.res$p.value
+str(p_value)
+hhh<- if(p_value > 0.05){print("LAT (p>0.05)")} else if(p_value > 0.01 & p_value < 0.05){print("LAT (p<0.05)")} else{print("LAT (p<0.01)")}
+my_text1 <- hhh
+my_grob1 = grid.text(my_text1, gp=gpar(col="black", fontsize=7, fontface="bold"))
+year1=season_dry1[i,6]
+lims<- c(min= as.Date(min(season_dry1$Date)), max= as.Date(max(season_dry1$Date)))
+time_dry<-ggplot(season_dry1)+geom_line( aes(x=Date, y=PRCP),color= "grey")
+timee_dry<-time_dry+geom_line(aes(x=Date, y=CDFM_dry),alpha = 0.6, size = 0.7,color= "blue")
+time_dry1<-timee_dry+geom_smooth(aes(x=Date, y=CDFM_dry),method="gam",color="red")+xlab("Date")+ylab("Rainfall (mm/month)")
+time_dry2<-time_dry1+scale_y_continuous(sec.axis = sec_axis(name ="CDFM (mm)",~ . + 0))
+time_dry3<-time_dry2+geom_vline(aes(xintercept = year1),size = 0.7,color= "black",linetype="dashed")
+time_dry4<-time_dry3+geom_line(aes(x=Date,y=sd),color= "black")+ggtitle("Dry Seasons")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  annotation_custom(my_grob1, xmin = as.Date(max(year1,100)), xmax = as.Date(max(year1,100)), ymin =max(season_dry1$PRCP), ymax = max(season_dry1$PRCP))
+time_dry4
+
+##############
+############## Wet SEASON lanzante TEST
+s.res <- lanzante.test(season_wet1$PRCP)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( season_wet1$PRCP[1:i])
+s.2 <- mean(season_wet1$PRCP[(i+1):n])
+sw<-(c(rep(s.1,i), rep(s.2,(n-i))))
+sw<-as.data.frame(as.numeric(sw))
+season_wet1$sw<-sw$`as.numeric(sw)`
+p_value <- s.res$p.value
+str(p_value)
+hhhh<- if(p_value > 0.05){print("LAT (p>0.05)")} else if(p_value > 0.01 & p_value < 0.05){print("LAT (p<0.05)")} else{print("LAT (p<0.01)")}
+my_text2 <- hhhh
+my_grob2 = grid.text(my_text2, gp=gpar(col="black", fontsize=7, fontface="bold"))
+year2=season_wet1[i,6]
+lims<- c(min= as.Date(min(season_wet1$Date)), max= as.Date(max(season_wet1$Date)))
+####### pLOTTING CDFM
+time_wet<-ggplot(season_wet1)+geom_line( aes(x=Date, y=PRCP),color= "grey")
+timee_wet<-time_wet+geom_line(aes(x=Date, y=CDFM_wet),alpha = 0.6, size = 0.7,color= "blue")
+time_wet1<-timee_wet+geom_smooth(aes(x=Date, y=CDFM_wet),method="gam",color="red")+xlab("Date")+ylab("Rainfall (mm/month)")
+time_wet2<-time_wet1+scale_y_continuous(sec.axis = sec_axis(name ="CDFM (mm)",~ . + 0))
+time_wet3<-time_wet2+geom_vline(aes(xintercept = year2),size = 0.7,color= "black",linetype="dashed")
+time_wet4<-time_wet3+geom_line(aes(x=Date,y=sw),color= "black")+ggtitle("Wet Seasons")+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+ 
+  annotation_custom(my_grob2, xmin = as.Date(max(year2,100)), xmax = as.Date(max(year2,100)), ymin =max(season_wet1$PRCP), ymax = max(season_wet1$PRCP))
+time_wet4
+####################################################################### ALL CDFM PLOTS
+tiff(paste0(" CDFM ",".tiff"),width=2000, height=2500, res = 350)
+p<-ggarrange(time_11,time_dry4,time_wet4, nrow =3, ncol =1, heights = c(10, 10,10),
+             widths =c(0.5) )
+dev.off()
+
+##################################
+################################## orginal mann-kendal test
+########## change point for wet and dry season ANNUALY   
+season_wet$Day<-rep(1,length.out=length(season_wet$YEAR))
+season_wet$Date<- as.Date(with(season_wet, paste(YEAR, MONTH, Day,sep="-")), "%Y-%m-%d")
+ts_wet <- xts(season_wet$PRCP, as.Date(season_wet$Date, "%Y-%m-%d"))
+# convert daily data
+ts_wet_y = apply.yearly(ts_wet, sum)
+ts_y_w= data.frame(sum_rainfall=coredata(ts_wet_y),date=index(ts_wet_y))
+
+rainfall_wet<- data.frame(date = ts_y_w$date,
+                          Year = as.numeric(format(ts_y_w$date, format = "%Y")),
+                          Month = as.numeric(format(ts_y_w$date, format = "%m")),
+                          Day = as.numeric(format(ts_y_w$date, format = "%d")))
+rainfall_wet$sum_rainfall<-ts_y_w$sum_rainfall
+rainfall_wet$yearfraction<-(rainfall_wet$Year+0.110)
+#####view(rainfall_wet)
+#####################################ECP change point wet season
+Rainfall_Wet<-rainfall_wet %>% dplyr::select(5)
+Rainfall_Wet<- as.matrix(Rainfall_Wet)
+x2= rep(c(min(rainfall_wet$Year):max(rainfall_wet$Year)), times= c(1))
+##################################### mem
+n1=length(rainfall_wet$date)
+num=1
+mem1 <- vector()
+
+while (n1>20) {
+  
+  x= rep(c(num), times= c(20))
+  
+  n1=n1-20
+  
+  num=num+1
+  
+  mem1 <- append(mem1, x)
+  
+}
+
+x= rep(c(num), times= c(n1))
+
+mem1 <- append(mem1, x)
+
+print(mem1)
+
+#### mem= rep=shows possible number of change point and time should the same as x=rainfall length
+CP_Rainfall_wet= e.agglo(Rainfall_Wet,member=mem1,alpha=2,penalty=function(cp,Xts) 0)
+par(mfrow=c(1,1))
+tiff(paste0(" ECP change point for annual wet rainfall ",".tiff"),width=1500, height=1000, res = 300)
+CP_Rainfall_wet$progression
+#plot(CP_Rainfall_wet$cluster)
+plot(x2, CP_Rainfall_wet$cluster,
+     main="ECP test annual wet rainfall",
+     xlab = "Year",
+     ylab="cluster",
+     type="p",
+     col="blue")
+dev.off()
+
+########################################## orginal MK test for rainfall_wet
+TR_wet_rainfall<-rkt(rainfall_wet$yearfraction,rainfall_wet$sum_rainfall)
+print(TR_wet_rainfall)
+capture.output(summary(print(TR_wet_rainfall)), file = " rainfall_annual_wet MK test results.txt")
+TR_wet_rainfall$B
+b0<- median(rainfall_wet$sum_rainfall)-(TR_wet_rainfall$B * median(rainfall_wet$Year))
+rainfall_wet$overall_slope<- b0+(TR_wet_rainfall$B * rainfall_wet$Year)
+length(rainfall_wet$Year)
+a2<-as.character(rainfall_wet$Year[1]) 
+b2<-as.character(rainfall_wet$Year[length(rainfall_wet$Year)]) 
+z2<-as.character(lapply(TR_wet_rainfall$B, round,2))
+rainfall_wet$`Sens Slope`<- paste("a)",a2,"-",b2,":"," ",z2," ","mm/yr",sep='')
+
+################################################## MKLTP
+rainfall_wet$MKLTP.Sig<-as.numeric (NA)
+rainfall_wet$Mean<-as.numeric (NA)
+rainfall_wet$Line<-as.numeric (NA)
+rainfall_wet$overll_line<-as.numeric (rainfall_wet$overall_slope)
+rainfall_wet$Line.pvalue<-as.character(NA)
+rainfall_wet$Mid_date<-as.Date.numeric(NA)
+rainfall_wet$mLine<- as.numeric (NA)
+#######################
+myts_Wet<- ts(rainfall_wet$sum_rainfall, start=c(min(rainfall_wet$Year)), end=c(max(rainfall_wet$Year)), frequency=1)
+MKLTP_Wet<- MannKendallLTP(myts_Wet)
+rainfall_wet$MKLTP.Sig<- if (MKLTP_Wet$Mann_Kendall_LTP[2]>0.01){
+  paste(lapply(MKLTP_Wet$Mann_Kendall_LTP[2], round,2))} else {0.001}
+rainfall_wet$Line.pvalue<-if (rainfall_wet$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",rainfall_wet$MKLTP.Sig,")", sep = "")} else{NA}
+rainfall_wet$Mid_date<-min(rainfall_wet$date)
+############################
+rainfall_wet$Seq<-as.numeric(CP_Rainfall_wet$cluster) 
+max(rainfall_wet$Seq)
+max(length(rainfall_wet$Seq))
+ddddddddd<-as.numeric( which(CP_Rainfall_wet$cluster == max(CP_Rainfall_wet$cluster)))
+max(ddddddddd)
+str(ddddddddd)
+rainfall_wet$Seq[max(ddddddddd)+1]
+jj<-max(ddddddddd)
+JJJ<-as.numeric( length(rainfall_wet$Seq))
+rainfall_wet$Seq[max(ddddddddd)+1]
+#rainfall_dry$Seq<-if (rainfall_dry$Seq[max(ddddddddd)+1]< rainfall_dry$Seq[max(ddddddddd)]){ rainfall_dry$Seq[jj:JJJ]==max(CP_Rainfall_dry$cluster)+1}
+i=rainfall_wet$Seq[max(ddddddddd)+1]
+rainfall_wet$Seq[jj:JJJ]<- 
+  if(i < as.numeric(rainfall_wet$Seq[max(ddddddddd)])) {as.numeric(max(CP_Rainfall_wet$cluster)+1)} else{rainfall_wet$Seq}
+####view(rainfall_wet)
+rainfall_wet$Max_date<- as.Date.numeric(NA) 
+rainfall_wet$ECP<-as.character(NA) 
+rainfall_wet$Seq_p.value<-as.numeric (NA)
+rainfall_wet$MKLTP_p.value<-as.numeric (NA)
+max(rainfall_wet$Seq)
+#################
+#for (i in rainfall_wet$Seq){  
+# m<- assign(paste("segment_wet", i, sep = "_"),subset(rainfall_wet, Seq==i))}
+######################################
+Max_Seq_wet<-max(rainfall_wet$Seq)
+SSSSS<-plyr::ddply(rainfall_wet, plyr::.(Seq), function(m){
+  FD<-rkt(m$yearfraction,m$sum_rainfall)
+  b0<- median(m$sum_rainfall)-(FD$B* median(m$Year))
+  m$overall_slope<- b0+(FD$B*m$Year)
+  length(m$Year)
+  a3<-as.character(m$Year[1]) 
+  b3<-as.character(m$Year[length(m$Year)]) 
+  z3<-as.character(lapply(FD$B, round,2))
+  m$`Sens Slope`<- paste( (if (m$Seq==1){"b)"} else if (m$Seq==2){"c)"} else if (m$Seq==3){"d)"} else if (m$Seq==4){"e)"} else if  (m$Seq==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+  m$Max_date<- if (m$Seq< Max_Seq_wet){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+  m$ECP<- if (m$Seq< Max_Seq_wet){paste("ECP", m$Seq, sep = "")} else {as.character (NA)}
+  m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+  #############
+  myts_Wet <- ts(m$sum_rainfall, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+  MKLTP_Wet<- MannKendallLTP(myts_Wet)
+  m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Wet$Mann_Kendall_LTP[2], round,2),")", sep = "")
+  ############################
+  m$Mid_date<- min(m$date)
+  m$Mean<-as.numeric (mean(m$sum_rainfall))
+  m$MKLTP.Sig<- if (MKLTP_Wet$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Wet$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+  m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+  m$overll_line<-as.numeric (NA)
+  m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+  #################
+  print(m$ECP)
+  return(m)
+}
+)
+###view(SSSSS)
+#########
+###############################
+total_rainfall_wet <- rbind(rainfall_wet,SSSSS)
+###view(total_rainfall_wet)
+tiff(paste0(" Annual_wet_trend_change point ",".tiff"),width=2000, height=1500, res = 350)
+Wet_rainfalltrend1<-ggplot(total_rainfall_wet, aes(x=date, color=`Sens Slope`))+
+  geom_point(aes(y=sum_rainfall, color=`Sens Slope`),size=1)+
+  ggtitle("Wet Seasons Trend")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  xlab("Date")+ylab("Rainfall (mm/year)")
+Wet_rainfalltrend2<-Wet_rainfalltrend1+geom_line(aes(y=overll_line),size=0.8,
+                                                 linetype= if(total_rainfall_wet$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+Wet_rainfalltrend3<-Wet_rainfalltrend2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+Wet_rainfalltrend4<-Wet_rainfalltrend3+geom_line(aes(y=mLine),size=0.8,
+                                                 linetype= if(total_rainfall_wet$MKLTP.Sig<= 0.05){"solid"} else {"twodash"})                                         
+
+#################
+for (i in total_rainfall_wet$Max_date){
+  Wet_rainfalltrend4  <- Wet_rainfalltrend4+ 
+    geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+}
+
+Wet_rainfalltrend4<-Wet_rainfalltrend4+geom_text(mapping = aes(x = Max_date,
+                                                               y = max(sum_rainfall),
+                                                               label = ECP,
+                                                               hjust = 1.5,
+                                                               vjust = 1.5),
+                                                 size=2.5,
+                                                 angle=90,
+                                                 show.legend = FALSE,
+                                                 data = total_rainfall_wet)
+
+Wet_rainfalltrend4<-Wet_rainfalltrend4+geom_text(mapping = aes(x=Mid_date,
+                                                               y = max(sum_rainfall),
+                                                               fill=`Sens Slope`,
+                                                               label = Line.pvalue,
+                                                               hjust = 1,
+                                                               vjust = 3),
+                                                 size=2.5,
+                                                 angle=90,
+                                                 show.legend = FALSE,
+                                                 data = total_rainfall_wet)
+
+Wet_rainfalltrend4
+dev.off()
+######################################################################################
+################### A divisive hierarchical estimation algorithm for multiple change point analysis
+################### e.divisive ENERGY DIVISIVE for annuall data
+ED_Wet= e.divisive(X=Rainfall_Wet,sig.lvl=0.05,R=199,k=NULL,min.size=20,alpha=1)
+ED_Wet$cluster
+ED_Wet$p.values
+####view(rainfall_wet)
+for(i in 1:5){
+  ED_Wet=e.divisive(X=Rainfall_Wet,sig.lvl=0.05,R=199,k=NULL,min.size=20,alpha=1)
+  if(ED_Wet$p.values<=0.05) {
+    ;
+    break
+  } else{"KHHHH"}
+  
+}
+
+if (max(ED_Wet$cluster)<2){capture.output(print("No change point"), file = " EDP No Change point for wet season rainfall.txt")} else{
+  rainfall_ED_Wet<-rainfall_wet %>% dplyr::select(1:8)
+  rainfall_ED_Wet$Seq_ED<-as.numeric(ED_Wet$cluster) 
+  ########################################
+  ###view(rainfall_ED_Wet)
+  ################################################## MKLTP
+  rainfall_ED_Wet$MKLTP.Sig<-as.numeric (NA)
+  rainfall_ED_Wet$Mean<-as.numeric (NA)
+  rainfall_ED_Wet$Line<-as.numeric (NA)
+  rainfall_ED_Wet$overll_line<-as.numeric (rainfall_ED_Wet$overall_slope)
+  rainfall_ED_Wet$Line.pvalue<-as.character(NA)
+  rainfall_ED_Wet$mLine<- as.numeric (NA)
+  ########################
+  rainfall_ED_Wet$Max_date_ED<- as.Date.numeric(NA) 
+  rainfall_ED_Wet$EDP<-as.character(NA) 
+  rainfall_ED_Wet$p.value<-as.numeric (NA)
+  rainfall_ED_Wet$Seq_p.value<-as.numeric (NA)
+  rainfall_ED_Wet$MKLTP_p.value<-as.numeric (NA)
+  rainfall_ED_Wet$Mid_date_ED<-as.Date.numeric(NA)
+  ###################################
+  myts_Wet_ED<- ts(rainfall_ED_Wet$sum_rainfall, start=c(min(rainfall_ED_Wet$Year)), end=c(max(rainfall_ED_Wet$Year)), frequency=1)
+  MKLTP_Wet_ED<- MannKendallLTP(myts_Wet_ED)
+  rainfall_ED_Wet$MKLTP.Sig<- if (MKLTP_Wet_ED$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Wet_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  rainfall_ED_Wet$Line.pvalue<-if (rainfall_ED_Wet$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",rainfall_ED_Wet$MKLTP.Sig,")", sep = "")} else{NA}
+  rainfall_ED_Wet$Mid_date_ED<-min(rainfall_ED_Wet$date)
+  ############################
+  ###########################
+  max(rainfall_ED_Wet$Seq_ED)
+  max(length(rainfall_ED_Wet$Seq_ED))
+  ddddddddd<-as.numeric( which(ED_Wet$cluster == max(ED_Wet$cluster)))
+  rainfall_ED_Wet$Seq_ED[max(ddddddddd)+1]
+  jj<-max(ddddddddd)
+  JJJ<-as.numeric( length(rainfall_ED_Wet$Seq_ED))
+  rainfall_ED_Wet$Seq_ED[max(ddddddddd)+1]
+  #rainfall_ED_Wet_dry$Seq<-if (rainfall_ED_Wet_dry$Seq[max(ddddddddd)+1]< rainfall_ED_Wet_dry$Seq[max(ddddddddd)]){ rainfall_ED_Wet_dry$Seq[jj:JJJ]==max(CP_rainfall_ED_Wet_dry$cluster)+1}
+  i=rainfall_ED_Wet$Seq_ED[max(ddddddddd)+1]
+  #rainfall_ED_Wet$Seq_ED[jj:JJJ]<- 
+  # if(i < as.numeric(rainfall_ED_Wet$Seq_ED[max(ddddddddd)])) {as.numeric(max(ED_Wet$cluster)+1)} else{rainfall_ED_Wet$Seq_ED}
+  #################
+  #for (i in rainfall_ED_Wet$Seq){  
+  # m<- assign(paste("segment_", i, sep = "_"),subset(rainfall_ED_Wet, Seq==i))}
+  ######################################
+  Max_Seq_ED_Wet<-max(rainfall_ED_Wet$Seq_ED)
+  EDPP<-plyr::ddply(rainfall_ED_Wet, plyr::.(Seq_ED), function(m){
+    FD<-rkt(m$yearfraction,m$sum_rainfall)
+    b0<- median(m$sum_rainfall)-(FD$B* median(m$Year))
+    m$overall_slope<- b0+(FD$B*m$Year)
+    length(m$Year)
+    a3<-as.character(m$Year[1]) 
+    b3<-as.character(m$Year[length(m$Year)]) 
+    z3<-as.character(lapply(FD$B, round,2))
+    m$`Sens Slope`<- paste( (if (m$Seq_ED==1){"b)"} else if (m$Seq_ED==2){"c)"} else if (m$Seq_ED==3){"d)"} else if (m$Seq_ED==4){"e)"} else if  (m$Seq_ED==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+    m$Max_date_ED<- if (m$Seq_ED< Max_Seq_ED_Wet){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+    m$p.value<- ED_Wet$p.values[m$Seq_ED]
+    m$EDP<- if (m$Seq_ED< Max_Seq_ED_Wet){paste("EDP", m$Seq_ED," ","p","(",m$p.value,")", sep = "")} else {as.character (NA)}
+    m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+    ######
+    myts_Wet_ED <- ts(m$sum_rainfall, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+    MKLTP_Wet_ED<- MannKendallLTP(myts_Wet_ED)
+    m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Wet_ED$Mann_Kendall_LTP[2], round,2),")", sep = "")
+    ########################
+    m$Mid_date_ED<- min(m$date)
+    m$Mean<-as.numeric (mean(m$sum_rainfall))
+    m$MKLTP.Sig<- if (MKLTP_Wet_ED$Mann_Kendall_LTP[2]>0.01){
+      paste(lapply(MKLTP_Wet_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+    m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+    m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+    m$overll_line<-as.numeric (NA)
+    m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+    #################
+    return(m)
+  }
+  )
+  
+  #####################################################################################
+  total_rainfall_Wet_EDP <- rbind(rainfall_ED_Wet,EDPP)
+  ####view(rainfall_ED_Wet)
+  ####view(total_rainfall_annuall)
+  tiff(paste0(" Wet_trend_EDP change point ",".tiff"),width=2000, height=1500, res = 350)
+  Wet_rainfalltrend_EDP1<-ggplot(total_rainfall_Wet_EDP, aes(x=date, color=`Sens Slope`))+
+    geom_point(aes(y=sum_rainfall, color=`Sens Slope`),size=1)+xlab("Date")+ylab("Rainfall (mm/year)")+
+    ggtitle("Wet Season Trend")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+  Wet_rainfalltrend_EDP2<-Wet_rainfalltrend_EDP1+geom_line(aes(y=overll_line),size=0.8,
+                                                           linetype= if(total_rainfall_Wet_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+  Wet_rainfalltrend_EDP3<-Wet_rainfalltrend_EDP2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+  Wet_rainfalltrend_EDP4<-Wet_rainfalltrend_EDP3+ geom_line(aes(y=mLine),size=0.8,
+                                                            linetype= if(total_rainfall_Wet_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"})                                         
+  
+  ##########
+  
+  for (i in total_rainfall_Wet_EDP$Max_date_ED){
+    Wet_rainfalltrend_EDP4  <- Wet_rainfalltrend_EDP4+ 
+      geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+  }
+  
+  Wet_rainfalltrend_EDP4<-Wet_rainfalltrend_EDP4+geom_text(mapping = aes(x = Max_date_ED,
+                                                                         y = max(sum_rainfall),
+                                                                         label = EDP,
+                                                                         hjust = 1.5,
+                                                                         vjust = 1.5),
+                                                           size=3,
+                                                           angle=90,
+                                                           show.legend = FALSE,
+                                                           data = total_rainfall_Wet_EDP)
+  
+  Wet_rainfalltrend_EDP4<-Wet_rainfalltrend_EDP4+geom_text(mapping = aes(x = Mid_date_ED,
+                                                                         y = max(sum_rainfall),
+                                                                         label = Line.pvalue,
+                                                                         hjust = 1,
+                                                                         vjust = 5.5), 
+                                                           size=2.5,  
+                                                           angle=90,
+                                                           show.legend = FALSE,
+                                                           data = total_rainfall_Wet_EDP)
+  Wet_rainfalltrend_EDP4
+  
+}# end of if
+dev.off()
+#################################### Dry
+season_dry$Day<-rep(1,length.out=length(season_dry$YEAR))
+season_dry$Date<- as.Date(with(season_dry, paste(YEAR, MONTH, Day,sep="-")), "%Y-%m-%d")
+ts_dry <- xts(season_dry$PRCP, as.Date(season_dry$Date, "%Y-%m-%d"))
+# convert daily data
+ts_dry_y = apply.yearly(ts_dry, sum)
+ts_y_d= data.frame(sum_rainfall=coredata(ts_dry_y),date=index(ts_dry_y))
+
+rainfall_dry<- data.frame(date = ts_y_d$date,
+                          Year = as.numeric(format(ts_y_d$date, format = "%Y")),
+                          Month = as.numeric(format(ts_y_d$date, format = "%m")),
+                          Day = as.numeric(format(ts_y_d$date, format = "%d")))
+rainfall_dry$sum_rainfall<-ts_y_d$sum_rainfall
+rainfall_dry$yearfraction<-(rainfall_dry$Year+0.110)
+
+####view(rainfall_dry)
+#####################################ECP change point wet season
+Rainfall_Dry<-rainfall_dry %>% dplyr::select(5)
+Rainfall_Dry<- as.matrix(Rainfall_Dry)
+min(rainfall_dry$Year)
+x3= rep(c(min(rainfall_dry$Year):max(rainfall_dry$Year)), times= c(1))
+##################################### mem
+n3=length(rainfall_dry$date)
+num=1
+mem3 <- vector()
+
+while (n3>20) {
+  
+  x= rep(c(num), times= c(20))
+  
+  n3=n3-20
+  
+  num=num+1
+  
+  mem3 <- append(mem3, x)
+  
+}
+
+x= rep(c(num), times= c(n3))
+
+mem3 <- append(mem3, x)
+
+print(mem3)
+
+#### mem= rep=shows possible number of change point and time should the same as x=rainfall length
+CP_Rainfall_dry= e.agglo(Rainfall_Dry,member=mem3,alpha=2,penalty=function(cp,Xts) 0)
+CP_Rainfall_dry$estimates
+CP_Rainfall_dry$cluster
+par(mfrow=c(1,1))
+tiff(paste0(" ECP change point for annual dry rainfall ",".tiff"),width=1500, height=1000, res = 300)
+CP_Rainfall_dry$progression
+#plot(CP_Rainfall_dry$cluster)
+plot(x3, CP_Rainfall_dry$cluster,
+     main="ECP test annual dry rainfall",
+     xlab = "Year",
+     ylab="cluster",
+     type="p",
+     col="blue")
+dev.off()
+########################################## orginal MK test for rainfall_dry
+TR_dry_rainfall<-rkt(rainfall_dry$yearfraction,rainfall_dry$sum_rainfall)
+print(TR_dry_rainfall)
+capture.output(summary(print(TR_dry_rainfall)), file = " rainfall_annual_dry MK test results.txt")
+TR_dry_rainfall$B
+b0<- median(rainfall_dry$sum_rainfall)-(TR_dry_rainfall$B * median(rainfall_dry$Year))
+rainfall_dry$overall_slope<- b0+(TR_dry_rainfall$B * rainfall_dry$Year)
+length(rainfall_dry$Year)
+a5<-as.character(rainfall_dry$Year[1]) 
+b5<-as.character(rainfall_dry$Year[length(rainfall_dry$Year)]) 
+z5<-as.character(lapply(TR_dry_rainfall$B, round,2))
+rainfall_dry$`Sens Slope`<- paste("a)",a5,"-",b5,":"," ",z5," ","mm/yr",sep='')
+##################################################
+################################################## MKLTP
+rainfall_dry$MKLTP.Sig<-as.numeric (NA)
+rainfall_dry$Mean<-as.numeric (NA)
+rainfall_dry$Line<-as.numeric (NA)
+rainfall_dry$overll_line<-as.numeric (rainfall_dry$overall_slope)
+rainfall_dry$Line.pvalue<-as.character(NA)
+rainfall_dry$Mid_date<-as.Date.numeric(NA)
+rainfall_dry$mLine<- as.numeric(NA)
+######################################
+myts_Dry<- ts(rainfall_dry$sum_rainfall, start=c(min(rainfall_dry$Year)), end=c(max(rainfall_dry$Year)), frequency=1)
+MKLTP_Dry<- MannKendallLTP(myts_Dry)
+rainfall_dry$MKLTP.Sig<- if (MKLTP_Dry$Mann_Kendall_LTP[2]>0.01){
+  paste(lapply(MKLTP_Dry$Mann_Kendall_LTP[2], round,2))} else {0.001}
+rainfall_dry$Line.pvalue<-if (rainfall_dry$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",rainfall_dry$MKLTP.Sig,")", sep = "")} else{NA}
+rainfall_dry$Mid_date<-min(rainfall_dry$date)
+############################
+rainfall_dry$Seq<-as.numeric(CP_Rainfall_dry$cluster)
+max(rainfall_dry$Seq)
+max(length(rainfall_dry$Seq))
+ddddddddd<-as.numeric( which(CP_Rainfall_dry$cluster == max(CP_Rainfall_dry$cluster)))
+rainfall_dry$Seq[max(ddddddddd)+1]
+jj<-max(ddddddddd)
+JJJ<-as.numeric( length(rainfall_dry$Seq))
+rainfall_dry$Seq[max(ddddddddd)+1]
+#rainfall_dry$Seq<-if (rainfall_dry$Seq[max(ddddddddd)+1]< rainfall_dry$Seq[max(ddddddddd)]){ rainfall_dry$Seq[jj:JJJ]==max(CP_Rainfall_dry$cluster)+1}
+i=rainfall_dry$Seq[max(ddddddddd)+1]
+rainfall_dry$Seq[jj:JJJ]<- 
+  if(i < as.numeric(rainfall_dry$Seq[max(ddddddddd)])) {as.numeric(max(CP_Rainfall_dry$cluster)+1)} else{rainfall_dry$Seq}
+####view(rainfall_dry)
+rainfall_dry$Max_date<- as.Date.numeric(NA) 
+rainfall_dry$ECP<-as.character(NA)
+rainfall_dry$Seq_p.value<-as.numeric (NA)
+rainfall_dry$MKLTP_p.value<-as.numeric (NA)
+max(rainfall_dry$Seq)
+#################
+
+#for (i in rainfall_dry$Seq){  
+# m<- assign(paste("segment_wet", i, sep = "_"),subset(rainfall_dry, Seq==i))}
+
+######################################
+Max_Seq_dry<-max(rainfall_dry$Seq)
+VVVVV<-plyr::ddply(rainfall_dry, plyr::.(Seq), function(m){
+  FD<-rkt(m$yearfraction,m$sum_rainfall)
+  b0<- median(m$sum_rainfall)-(FD$B* median(m$Year))
+  m$overall_slope<- b0+(FD$B*m$Year)
+  a6<-as.character(m$Year[1]) 
+  b6<-as.character(m$Year[length(m$Year)]) 
+  z6<-as.character(lapply(FD$B, round,2))
+  m$`Sens Slope`<- paste( (if (m$Seq==1){"b)"} else if (m$Seq==2){"c)"} else if (m$Seq==3){"d)"} else if (m$Seq==4){"e)"} else if  (m$Seq==5){"f)"} else {"g)"}) ,a6,"-",b6,":"," ",z6," ","mm/yr",sep='')
+  m$Max_date<- if (m$Seq< Max_Seq_dry){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+  m$ECP<- if (m$Seq< Max_Seq_dry){paste("ECP", m$Seq, sep = "")} else {as.character (NA)}
+  m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+  ######
+  myts_Dry <- ts(m$sum_rainfall, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+  MKLTP_Dry<- MannKendallLTP(myts_Dry)
+  m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Dry$Mann_Kendall_LTP[2], round,2),")", sep = "")
+  ############################
+  m$Mid_date<- min(m$date)
+  m$Mean<-as.numeric (mean(m$sum_rainfall))
+  m$MKLTP.Sig<- if (MKLTP_Dry$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Dry$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+  m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+  m$overll_line<-as.numeric (NA)
+  m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+  #################
+  
+  print(m$ECP)
+  return(m)
+}
+)
+
+####view(VVVVV)
+#####################################################################################
+total_rainfall_dry <- rbind(rainfall_dry,VVVVV)
+#####view(total_rainfall_dry)
+tiff(paste0(" Annual_dry_trend_change point ",".tiff"),width=2000, height=1500, res = 350)
+Dry_rainfalltrend1<-ggplot(total_rainfall_dry, aes(x=date, color=`Sens Slope`))+
+  geom_point(aes(y=sum_rainfall, color=`Sens Slope`),size=1)+xlab("Date")+ylab("Rainfall (mm/year)")+
+  ggtitle("Dry Seasons Trend")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+
+Dry_rainfalltrend2<-Dry_rainfalltrend1+ geom_line(aes(y=overll_line),size=0.8,
+                                                  linetype= if(total_rainfall_dry$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+Dry_rainfalltrend3<-Dry_rainfalltrend2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+Dry_rainfalltrend4<-Dry_rainfalltrend3+geom_line(aes(y=mLine),size=0.8,
+                                                 linetype= if(total_rainfall_dry$MKLTP.Sig<= 0.05){"solid"} else {"twodash"})
+######################
+for (i in total_rainfall_dry$Max_date){
+  Dry_rainfalltrend4  <- Dry_rainfalltrend4+ 
+    geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+}
+summary(total_rainfall_dry)
+
+
+Dry_rainfalltrend4<-Dry_rainfalltrend4+geom_text(mapping = aes(x = Max_date,
+                                                               y = max(sum_rainfall),
+                                                               label = ECP,
+                                                               hjust = 1.5,
+                                                               vjust = 1.5),
+                                                 size=2.5,
+                                                 angle=90,
+                                                 show.legend = FALSE,
+                                                 data = total_rainfall_dry)
+Dry_rainfalltrend4<- Dry_rainfalltrend4+geom_text(mapping = aes(x = Mid_date,
+                                                                y = max(sum_rainfall),
+                                                                fill=`Sens Slope`,
+                                                                label = Line.pvalue,
+                                                                hjust = 1,
+                                                                vjust = 5.5),
+                                                  size=2.5,
+                                                  angle=90,
+                                                  show.legend = FALSE,
+                                                  data = total_rainfall_dry)
+
+
+Dry_rainfalltrend4
+
+dev.off()
+
+######################################################################################
+################### A divisive hierarchical estimation algorithm for multiple change point analysis
+################### e.divisive ENERGY DIVISIVE for annuall data
+
+ED_Dry= e.divisive(X=Rainfall_Dry,sig.lvl=0.05,R=199,k=NULL,min.size=20,alpha=1)
+
+for(i in 1:15){
+  ED_Dry=e.divisive(X=Rainfall_Dry,sig.lvl=0.05,R=199,k=NULL,min.size=20,alpha=1)
+  if(ED_Dry$p.values[1]<=0.05) {
+    print("End of Loop") ;
+    break
+  } else{"KHHHH"}
+  
+}
+####view(rainfall_dry)
+if (max(ED_Dry$cluster)<2){capture.output(print("No change point"), file = " EDP No Change point for Dry season rainfall.txt")} else{
+  rainfall_ED_Dry<-rainfall_dry %>% dplyr::select(1:8)
+  rainfall_ED_Dry$Seq_ED<-as.numeric(ED_Dry$cluster) 
+  ################################################
+  ################################################## MKLTP
+  rainfall_ED_Dry$MKLTP.Sig<-as.numeric (NA)
+  rainfall_ED_Dry$Mean<-as.numeric (NA)
+  rainfall_ED_Dry$Line<-as.numeric (NA)
+  rainfall_ED_Dry$overll_line<-as.numeric (rainfall_ED_Dry$overall_slope)
+  rainfall_ED_Dry$Line.pvalue<-as.character(NA)
+  rainfall_ED_Dry$mLine<- as.numeric(NA)
+  #####################################################
+  rainfall_ED_Dry$Max_date_ED<- as.Date.numeric(NA) 
+  rainfall_ED_Dry$EDP<-as.character(NA) 
+  rainfall_ED_Dry$p.value<-as.numeric (NA)
+  rainfall_ED_Dry$Seq_p.value<-as.numeric (NA)
+  rainfall_ED_Dry$MKLTP_p.value<-as.numeric (NA)
+  rainfall_ED_Dry$Mid_date_ED<-as.Date.numeric(NA)
+  ##################################################
+  ######################################
+  myts_Dry_ED<- ts(rainfall_ED_Dry$sum_rainfall, start=c(min(rainfall_ED_Dry$Year)), end=c(max(rainfall_ED_Dry$Year)), frequency=1)
+  MKLTP_Dry_ED<- MannKendallLTP(myts_Dry_ED)
+  rainfall_ED_Dry$MKLTP.Sig<- if (MKLTP_Dry_ED$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Dry_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  rainfall_ED_Dry$Line.pvalue<-if (rainfall_ED_Dry$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",rainfall_ED_Dry$MKLTP.Sig,")", sep = "")} else{NA}
+  rainfall_ED_Dry$Mid_date_ED<-min(rainfall_ED_Dry$date)
+  
+  ############################
+  max(rainfall_ED_Dry$Seq_ED)
+  max(length(rainfall_ED_Dry$Seq_ED))
+  ddddddddd<-as.numeric( which(ED_Dry$cluster == max(ED_Dry$cluster)))
+  rainfall_ED_Dry$Seq_ED[max(ddddddddd)+1]
+  jj<-max(ddddddddd)
+  JJJ<-as.numeric( length(rainfall_ED_Dry$Seq_ED))
+  rainfall_ED_Dry$Seq_ED[max(ddddddddd)+1]
+  i=rainfall_ED_Dry$Seq_ED[max(ddddddddd)+1]
+  #################
+  
+  #for (i in rainfall_ED_Dry$Seq){  
+  # m<- assign(paste("segment_", i, sep = "_"),subset(rainfall_ED_Dry, Seq==i))}
+  
+  ######################################
+  Max_Seq_ED_Dry<-max(rainfall_ED_Dry$Seq_ED)
+  EDPP<-plyr::ddply(rainfall_ED_Dry, plyr::.(Seq_ED), function(m){
+    FD<-rkt(m$yearfraction,m$sum_rainfall)
+    b0<- median(m$sum_rainfall)-(FD$B* median(m$Year))
+    m$overall_slope<- b0+(FD$B*m$Year)
+    length(m$Year)
+    a3<-as.character(m$Year[1]) 
+    b3<-as.character(m$Year[length(m$Year)]) 
+    z3<-as.character(lapply(FD$B, round,2))
+    m$`Sens Slope`<- paste( (if (m$Seq_ED==1){"b)"} else if (m$Seq_ED==2){"c)"} else if (m$Seq_ED==3){"d)"} else if (m$Seq_ED==4){"e)"} else if  (m$Seq_ED==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","mm/yr",sep='')
+    m$Max_date_ED<- if (m$Seq_ED< Max_Seq_ED_Dry){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+    m$p.value<- ED_Dry$p.values[m$Seq_ED]
+    m$EDP<- if (m$Seq_ED< Max_Seq_ED_Dry){paste("EDP", m$Seq_ED," ","p","(",m$p.value,")", sep = "")} else {as.character (NA)}
+    m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+    ################
+    myts_Dry_ED <- ts(m$sum_rainfall, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+    MKLTP_Dry_ED<- MannKendallLTP( myts_Dry_ED)
+    m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Dry_ED$Mann_Kendall_LTP[2], round,2),")", sep = "")
+    ########################
+    m$Mid_date_ED<- min(m$date)
+    m$Mean<-as.numeric (mean(m$sum_rainfall))
+    m$MKLTP.Sig<- if (MKLTP_Dry_ED$Mann_Kendall_LTP[2]>0.01){
+      paste(lapply(MKLTP_Dry_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+    m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+    m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+    m$overll_line<-as.numeric (NA)
+    m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+    #################
+    return(m)
+  }
+  )
+  #####################################################################################
+  total_rainfall_Dry_EDP <- rbind(rainfall_ED_Dry,EDPP)
+  ###view(rainfall_ED_Dry)
+  tiff(paste0(" Dry_trend_EDP change point ",".tiff"),width=2000, height=1500, res = 350)
+  Dry_rainfalltrend_EDP1<-ggplot(total_rainfall_Dry_EDP, aes(x=date, color=`Sens Slope`))+
+    geom_point(aes(y=sum_rainfall, color=`Sens Slope`),size=1)+xlab("Date")+ylab("Rainfall (mm/year)")+
+    ggtitle("Dry Season Trend")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+  Dry_rainfalltrend_EDP2<-Dry_rainfalltrend_EDP1+geom_line(aes(y=overll_line),size=0.8,
+                                                           linetype= if(total_rainfall_Dry_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} ) 
+  Dry_rainfalltrend_EDP3<-Dry_rainfalltrend_EDP2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+  Dry_rainfalltrend_EDP4<-Dry_rainfalltrend_EDP3+geom_line(aes(y=mLine),size=0.8,
+                                                           linetype= if(total_rainfall_Dry_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"})
+  #################################
+  for (i in total_rainfall_Dry_EDP$Max_date_ED){
+    Dry_rainfalltrend_EDP4  <- Dry_rainfalltrend_EDP4+ 
+      geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+  }
+  
+  Dry_rainfalltrend_EDP4<-Dry_rainfalltrend_EDP4+geom_text(mapping = aes(x = Max_date_ED,
+                                                                         y = max(sum_rainfall),
+                                                                         label = EDP,
+                                                                         hjust = 1.5,
+                                                                         vjust = 1.5),
+                                                           size=3,
+                                                           angle=90,
+                                                           show.legend = FALSE,
+                                                           data = total_rainfall_Dry_EDP)
+  
+  Dry_rainfalltrend_EDP4<-Dry_rainfalltrend_EDP4+geom_text(mapping = aes(x = Mid_date_ED,
+                                                                         y = max(sum_rainfall),
+                                                                         fill=`Sens Slope`,
+                                                                         label = Line.pvalue,
+                                                                         hjust = 1,
+                                                                         vjust = 5.5),
+                                                           size=2.5,
+                                                           angle=90,
+                                                           show.legend = FALSE,
+                                                           data = total_rainfall_Dry_EDP)
+  
+  
+}# end of if
+dev.off()
+
+##################################### Ratio of DRY/Wet
+rainfall_dry
+rainfall_wet
+RDW<- rainfall_wet$sum_rainfall
+RDW<- as.data.frame(RDW)
+RDW$Dry<- rainfall_dry$sum_rainfall
+RDW$Wet<-RDW$RDW
+RDW$divided<-RDW$Dry/RDW$Wet
+RDW$Comulative<- cumsum(RDW$divided)
+RDW$Percent<- RDW$divided*100
+RDW$Year<-rainfall_wet$date  
+####view(RDW)
+RDW1<-ggplot(RDW)+geom_line(aes(x=Year,y=Percent),color="blue")+ xlab("Date")+ylab("Dry / Wet (%)")+
+  geom_smooth(aes(x=Year,y=Percent), color="red")
+RDW2<-RDW1+theme_bw()
+RDW2
+############################ SPEI-24
+
+Sp<-as.data.frame(spi_24$fitted)
+Sp$Date<-PRCP1$Date
+Sp$year1<- PRCP1$YEAR
+Sp$color[Sp$`Series 1`>0]<-"Wet Period"
+Sp$color[is.na(Sp$`Series 1`)]<-"black"
+Sp$color[Sp$`Series 1`<0]<-"Dry Period"
+colnames(Sp) <- c("SPI","Year","Date","SPI-24")
+write.csv(Sp,file = "Sp.cvs")
+#####view(Sp)
+str(Sp)
+Zs<-ggplot(Sp,aes(x=Date,y=SPI/10, fill=`SPI-24`))+geom_col()+xlab("Date")+ylab("SPI")+
+  scale_fill_manual("SPEI-24", values = c("black" = "black", "Dry Period" = "red", "Wet Period" = "blue"))+theme_bw()+
+  scale_x_continuous( breaks = c(1900,1920,1940,1960,1980,2000,2020))
+Zs
+######
+##################################### multiple graph
+tiff(paste0(" Annual_wet_dry season trend ",".tiff"),width=2000, height=2500, res = 350)
+f<-ggarrange(annual_rainfalltrend4,Dry_rainfalltrend4,Wet_rainfalltrend4, nrow =3, ncol =1, heights = c(10, 10,10),
+             widths =c(0.5) )
+dev.off()
+###########################
+################### overall graph
+tiff(paste0(" Overall rainfall trend ",".tiff"),width=3000, height=3000, res = 300)
+v<-ggarrange(time_11,annual_rainfalltrend4,time_dry4,Dry_rainfalltrend4,time_wet4,Wet_rainfalltrend4,Zs,RDW2, nrow =4, 
+             ncol =2 ,labels = c("A", "E","B","F", "C","G","D","H"),
+             heights = c(20,20,20,20),widths =c(10,10))
+dev.off()
+##########################################################MKLTP output
+Rainfall_annuall
+myts_annuall_output<- ts(Rainfall_annuall, start=c(min(PRCP1$YEAR)), end=c(max(PRCP1$YEAR)), frequency=1)
+MKLTP_annuall_output<- MannKendallLTP(myts_annuall_output)
+capture.output(summary(print(MKLTP_annuall_output)), file = " Annual Rainfall MKLTP test results.txt")
+####################
+Rainfall_Wet
+myts_wet_output<- ts(Rainfall_Wet, start=c(min(PRCP1$YEAR)), end=c(max(PRCP1$YEAR)), frequency=1)
+MKLTP_wet_output<- MannKendallLTP(myts_wet_output)
+capture.output(summary(print(MKLTP_wet_output)), file = " Wet Season Rainfall MKLTP test results.txt")
+#############################
+Rainfall_Dry
+myts_dry_output<- ts(Rainfall_Dry, start=c(min(PRCP1$YEAR)), end=c(max(PRCP1$YEAR)), frequency=1)
+MKLTP_dry_output<- MannKendallLTP(myts_dry_output)
+capture.output(summary(print(MKLTP_dry_output)), file = " Dry Season Rainfall MKLTP test results.txt")
+#######################################
+#####################     disrtribution ANALYSIS
+####view(total_rainfall_annuall)
+total_rainfall_annuall$Period<- gsub(':.*', "", total_rainfall_annuall$`Sens Slope`)
+####view(total_rainfall_annuall)
+A1<-ggplot(total_rainfall_annuall, aes(sum_rainfall, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Annual Rainfall")+ylab("Density")
+#######total_rainfall_wet
+total_rainfall_wet$Period<- gsub(':.*', "", total_rainfall_wet$`Sens Slope`)
+A2<-ggplot(total_rainfall_wet, aes(sum_rainfall, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Wet Rainfall")+ylab("Density")
+############### 
+total_rainfall_dry
+total_rainfall_dry$Period<- gsub(':.*', "", total_rainfall_dry$`Sens Slope`)
+A3<- ggplot(total_rainfall_dry, aes(sum_rainfall, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Dry Rainfall")+ylab("Density")
+############
+tiff(paste0(" Annual_wet_dry season Distribution for ECP ",".tiff"),width=2000, height=2500, res = 350)
+f<-ggarrange(A1,A3,A2, nrow =3, ncol =1, heights = c(10, 10,10),
+             widths =c(0.5) )
+dev.off()
+
+############### Annuall
+####view(total_rainfall_annuall_EDP)
+total_rainfall_annuall_EDP$Period<- gsub(':.*', "", total_rainfall_annuall_EDP$`Sens Slope`)
+A4<- ggplot(total_rainfall_annuall_EDP, aes(sum_rainfall, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Annual Rainfall")+ylab("Density")
+
+tiff(paste0(" Annual Distribution for EDP",".tiff"),width=2000, height=2500, res = 350)
+g<-ggarrange(annual_rainfalltrend_EDP4,A4, nrow =2, ncol =1, heights = c(30,30),
+             widths =c(0.5) )
+dev.off()
+
+#########################Wet
+####view(total_rainfall_Wet_EDP)
+total_rainfall_Wet_EDP$Period<- gsub(':.*', "",total_rainfall_Wet_EDP$`Sens Slope`)
+A5<- ggplot(total_rainfall_Wet_EDP, aes(sum_rainfall, fill=Period, color=Period))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Wet Rainfall")+ylab("Density")
+
+tiff(paste0(" Wet Distribution for EDP",".tiff"),width=2000, height=2500, res = 350)
+g<-ggarrange(Wet_rainfalltrend_EDP4,A5, nrow =2, ncol =1, heights = c(30,30),
+             widths =c(0.5) )
+dev.off()
+###############################################
+total_rainfall_Dry_EDP
+total_rainfall_Dry_EDP$Period<- gsub(':.*', "",total_rainfall_Dry_EDP$`Sens Slope`)
+A6<- ggplot(total_rainfall_Dry_EDP, aes(sum_rainfall, fill=Period, color=Period))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Dry Rainfall")+ylab("Density")
+
+tiff(paste0(" Dry Distribution for EDP",".tiff"),width=2000, height=2500, res = 350)
+g<-ggarrange(Dry_rainfalltrend_EDP4,A6, nrow =2, ncol =1, heights = c(30,30),
+             widths =c(0.5) )
+dev.off()
+########################################
+################################################# how to make nice table.
+Pararmeters<- as.character( c("2-sided p-value", "Slope (mm/yr)", "Sig"))
+
+`SMK Annuall`<-c(as.numeric( Tr_Rainfall$sl),as.numeric(Tr_Rainfall$B),if (Tr_Rainfall$sl<= 0.01){"**"} 
+                 else if (Tr_Rainfall$sl<= 0.05){"*"} else{"-"})
+`SMK Wet`<-c(as.numeric(Tr_Wetseason$sl),as.numeric(Tr_Wetseason$B),if (Tr_Wetseason$sl<= 0.01){"**"} 
+             else if (Tr_Wetseason$sl<= 0.05){"*"} else{"-"})
+`SMK Dry`<-c(as.numeric(Tr_Dryseason$sl),as.numeric(Tr_Dryseason$B),if (Tr_Dryseason$sl<= 0.01){"**"} 
+             else if (Tr_Dryseason$sl<= 0.05){"*"} else{"-"})
+##########################
+`OMKT Annuall`<-c(as.numeric(TR_annual_rainfall$sl),as.numeric(TR_annual_rainfall$B),if (TR_annual_rainfall$sl<= 0.01){"**"} 
+                  else if (TR_annual_rainfall$sl<= 0.05){"*"} else{"-"})
+`OMKT Wet`<-c(as.numeric(TR_wet_rainfall$sl),as.numeric(TR_wet_rainfall$B),if (TR_wet_rainfall$sl<= 0.01){"**"} 
+              else if (TR_wet_rainfall$sl<= 0.05){"*"} else{"-"})
+`OMKT Dry`<-c(as.numeric(TR_dry_rainfall$sl),as.numeric(TR_dry_rainfall$B),if (TR_dry_rainfall$sl<= 0.01){"**"} 
+              else if (TR_dry_rainfall$sl<= 0.05){"*"} else{"-"})
+####################
+`MKLTP Annuall`<-c(as.numeric(MKLTP_Annuall$Mann_Kendall_LTP[2]),as.numeric(MKLTP_Annuall$Mann_Kendall[4]),if (MKLTP_Annuall$Mann_Kendall_LTP[2]<= 0.01){"**"} 
+                   else if (MKLTP_Annuall$Mann_Kendall_LTP[2]<= 0.05){"*"} else{"-"})
+`MKLTP Wet`<-c(as.numeric(MKLTP_Wet$Mann_Kendall_LTP[2]),as.numeric(MKLTP_Wet$Mann_Kendall[4]),if (MKLTP_Wet$Mann_Kendall_LTP[2]<= 0.01){"**"} 
+               else if (MKLTP_Wet$Mann_Kendall_LTP[2]<= 0.05){"*"} else{"-"})
+`MKLTP Dry`<-c(as.numeric(MKLTP_Dry$Mann_Kendall_LTP[2]), as.numeric(MKLTP_Dry$Mann_Kendall[4]),if (MKLTP_Dry$Mann_Kendall_LTP[2]<= 0.01){"**"} 
+               else if (MKLTP_Dry$Mann_Kendall_LTP[2]<= 0.05){"*"} else{"-"})
+####################### Cerating Table
+Table<- data.frame(Pararmeters,`SMK Annuall`, `SMK Wet`,`SMK Dry`,`OMKT Annuall`,`OMKT Wet`,`OMKT Dry`,
+                   `MKLTP Annuall`,`MKLTP Wet`,`MKLTP Dry`)
+#######################################
+
+Table[] <- lapply(Table, function(x) {
+  x1 <- type.convert(as.character(x), as.is=TRUE)
+  ifelse(grepl("^[0-9.-]+$", x1), round(as.numeric(x1), 3), x1)})
+library(htmltools)
+
+Table1<- formattable(Table,list(
+  Pararmeters= formatter("span", 
+                         style = ~ style(color = "red",font.weight = "bold"))))
+
+saveWidget(as.htmlwidget(Table1), file ="Overall Statistics Table.html")
+###################################
+Table2<- datatable(Table)
+saveWidget(Table2, file ="Overall Statistics Table Filter.html")
+
+total_rainfall_annuall
+Table3<- datatable(total_rainfall_annuall, filter= 'top')
+saveWidget(Table3, file ="Annual trend Statistics via  Filter.html")
+
+
+
+
+
