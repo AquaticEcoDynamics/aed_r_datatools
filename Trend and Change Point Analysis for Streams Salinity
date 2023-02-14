@@ -1,0 +1,1377 @@
+library(scales)
+library(plotrix)
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+library(tibble)
+library(rlang)
+library(gridExtra)
+library(egg)
+library(grid)
+library(readxl)
+library(hrbrthemes)
+library(viridis)
+library(hydrostats)
+library(plyr)
+library(openxlsx)
+library(tidyverse)
+library(xts)
+#### Change point
+library(trend)
+library(boot)
+library(ecp)
+library(lubridate)
+##### The Seasonal Kendall Test
+library(rkt)
+library(EnvStats)
+library(readr)
+library(prophet)
+library(tidyselect)
+library(loo)
+library(DT)
+library(formattable)
+library(HKprocess)
+library(wql)
+
+#######################################  Salinity
+    
+setwd("C:/Users/....")
+files <- list.files( pattern = "*.xlsx", full.names = T)
+    
+Cond<- read_excel("WaterQualityContinuousForSiteCrossTab.xlsx", col_types = c("text", 
+                                                 "date", "text", "text", "numeric", "text", 
+                                                 "text", "text", "text", "text", "numeric", 
+                                                 "text", "text", "text"))
+
+Cond<- Cond %>% dplyr::select(2,5,11)
+colnames(Cond)<- c("Date","Cond", "Temp")
+Cond<- na.omit(Cond)
+Sal<- as.data.frame (ec2pss(Cond$Cond/1000,Cond$Temp, p = 0))
+Sal$date<-Cond$Date
+#Sal$Flow<- Cond$Q
+#colnames(Sal) <- c("Sal","date", "Flow")
+######### Salinity Ton per day
+#Sal$Sal<-((Sal$Sal)*(86400*(Sal$Flow*1000)))/1000000
+colnames(Sal) <- c("Sal","date")
+#############################################################
+################### Time series of annual and monthly avrage of salinity concentration
+Sal_xts<- xts(Sal$Sal, as.Date(Sal$date, "%Y-%m-%d"))
+
+Sal_xts<-na.omit(Sal_xts) 
+Sal_Y = apply.yearly(Sal_xts, mean)
+Sal_M= apply.monthly(Sal_xts, mean)
+Sal_M=data.frame(Sal_M=coredata(Sal_M),date=index(Sal_M))
+Sal_Y=data.frame(Sal_Y=coredata(Sal_Y),date=index(Sal_Y))
+Sal_monthly= Sal_M %>% 
+  mutate(date = ymd(date)) %>% 
+  mutate_at(vars(date), funs(year, month, day))
+Sal_yearly= Sal_Y %>% 
+  mutate(date = ymd(date)) %>% 
+  mutate_at(vars(date), funs(year, month, day))
+colnames(Sal_monthly) <- c("Sal","date","Year","Month","Day")
+colnames(Sal_yearly) <- c("Sal","date","Year","Month","Day")
+# hydrological year
+Sal_monthly$hyear<- ifelse(Sal_monthly$Month>=5,Sal_monthly$Year,Sal_monthly$Year-1)
+Sal_yearly$hyear<- ifelse(Sal_yearly$Month>=5,Sal_yearly$Year,Sal_yearly$Year-1)
+##############
+write.csv(Sal_monthly,file = "Sal_monthly.csv")
+write.csv(Sal_yearly,file = "Sal_yearly.csv")
+############################################## monthly SMK and partial SMK test for Rainfall
+Tr_Salinity<-rkt(Sal_monthly$Year,Sal_monthly$Sal,Sal_monthly$Month,,TRUE)
+print(Tr_Salinity)
+capture.output(summary(print(Tr_Salinity)), file = "Salinity SMK test results.txt")
+########## Change point detection using Lanzanteâs test
+Salinity_monthly <-ts(Sal_monthly[, 1], start = c(Sal_monthly$Year[1], Sal_monthly$Month[1]),end=c(Sal_monthly$Year[length(Sal_monthly$Year)],Sal_monthly$Month[length(Sal_monthly$Month)]), frequency = 12)
+tiff(paste0(" Salinity_monthly_Change point ",".tiff"),width=1500, height=1000, res = 300)
+plot(Salinity_monthly)
+s.res <- lanzante.test( Salinity_monthly)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( Salinity_monthly[1:i])
+s.2 <- mean(Salinity_monthly[(i+1):n])
+s <- ts(c(rep(s.1,i), rep(s.2,(n-i))))
+tsp(s) <- tsp(Salinity_monthly)
+lines(s, col=2,lty=1)
+print(s.res)
+dev.off()
+############################CDFM for monthly annuall data
+Mean<- mean(Sal_monthly$Sal)
+Sal_monthly$Pi=((Sal_monthly$Sal-Mean)/12)
+Sal_monthly$CDFM<- cumsum(Sal_monthly$Pi) # replace the cell freq.s by cumulative freq.s
+#################################################################################
+lims <- c(min_date=min(Sal_monthly$date),max_date=max(Sal_monthly$date))
+Salmonthly1<-ggplot(Sal_monthly)+geom_line( aes(x=date, y=Sal),color= "grey")
+Salmonthly2<-Salmonthly1+geom_line(aes(x=date, y=CDFM),alpha = 0.6, size = 0.7,color= "blue")
+Salmonthly3<-Salmonthly2+geom_smooth(aes(x=date, y=CDFM),method="gam",color="red")+xlab("Date")+ylab("Salinity (g/L)")
+Salmonthly4<-Salmonthly3+scale_y_continuous(sec.axis = sec_axis(name ="CDFM (g/L)",~ . + 0))
+Salmonthly5<- Salmonthly4+theme_bw()
+Salmonthly5
+dev.off()
+###########################
+#################################### monthly Salinity
+s.res <- lanzante.test(Sal_monthly$Sal)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean( Sal_monthly$Sal[1:i])
+s.2 <- mean( Sal_monthly$Sal[(i+1):n])
+sm<- ts(c(rep(s.1,i), rep(s.2,(n-i))))
+sm<-as.data.frame(as.numeric(sm))
+Sal_monthly$sm<-sm$`as.numeric(sm)`
+p_value <- s.res$p.value
+str(p_value)
+FM<- if(p_value > 0.05){print("LAT (p>0.05)")} else if(p_value > 0.01 & p_value < 0.05){print("LAT (p<0.05)")} else{print("LAT (p<0.01)")}
+my_text <- FM
+my_grob = grid.text(my_text, x=0.71,  y=0.9, gp=gpar(col="black", fontsize=7, fontface="bold"))
+year=Sal_monthly[i,2]
+
+Salmonthly10<-Salmonthly5+geom_line(aes(x=date,y=Sal_monthly$sm),colour="black")
+Salmonthly11<-Salmonthly10+ggtitle("Annual")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+ 
+  annotation_custom(my_grob)+geom_vline(aes(xintercept = year),size = 0.7,color= "black",linetype="dashed")
+Salmonthly11
+dev.off()
+###########################################
+############################################ orginal mk test
+Sal_yearly$yearfraction<-(Sal_yearly$hyear +0.110)
+TR_annual_Sal<-rkt(Sal_yearly$yearfraction,Sal_yearly$Sal)
+print(TR_annual_Sal)
+capture.output(summary(print(TR_annual_Sal)), file = " Annual Sal MK test results.txt")
+################################# ECP
+#### ENERGY AGGLOMERATIVE
+###x and X1 should be mattrix
+Sal1<-Sal_yearly%>% dplyr::select(1)
+Sal1<- as.matrix(Sal1)
+x1= rep(c(min(Sal_yearly$Year):max(Sal_yearly$Year)), times= c(1))
+########################
+n=length(Sal_yearly$date)
+num=1
+mem <- vector()
+
+while (n>8) {
+  
+  x= rep(c(num), times= c(8))
+  
+  n=n-8
+  
+  num=num+1
+  
+  mem <- append(mem, x)
+  
+}
+
+x= rep(c(num), times= c(n))
+
+mem <- append(mem, x)
+
+print(mem)
+#### mem= c=shows possible number of change point and time should the same as x=Sal1 length
+tiff(paste0("Salinity_annual_ECP test",".tiff"),width=1500, height=1000, res = 300)
+CP_Sal = e.agglo(X=Sal1,member=mem,alpha=2,penalty=function(cp,Xts) 0)
+CP_Sal$estimates
+CP_Sal$cluster
+plot(x1, CP_Sal$cluster,
+     main="ECP test Salinity annual",
+     xlab = "Year",
+     ylab="cluster",
+     type="p",
+     col="blue")
+dev.off()
+#####################################
+##################################### OMK test for ANNUAL Salinity
+TR_annual_Sal
+TR_annual_Sal$sl
+TR_annual_Sal$B
+b0<- median(Sal_yearly$Sal)-(TR_annual_Sal$B * median(Sal_yearly$Year))
+Sal_yearly$overall_slope<- b0+(TR_annual_Sal$B * Sal_yearly$Year)
+a1<-as.character(Sal_yearly$Year[1]) 
+b1<-as.character(Sal_yearly$Year[length(Sal_yearly$Year)]) 
+z1<-as.character(lapply(TR_annual_Sal$B, round,2))
+Sal_yearly$`Sens Slope`<- paste("a)",a1,"-",b1,":"," ",z1," ","g/L/yr",sep='')
+######################################
+###################################### MKLTP tEST FOR ANNUALL Salinity
+Sal_yearly$MKLTP.Sig<-as.numeric (NA)
+Sal_yearly$Mean<-as.numeric (NA)
+Sal_yearly$Line<-as.numeric (NA)
+Sal_yearly$overll_line<-as.numeric (Sal_yearly$overall_slope)
+Sal_yearly$Line.pvalue<-as.character(NA)
+Sal_yearly$Mid_date<-as.Date.numeric(NA)
+Sal_yearly$mLine<- as.numeric(NA)
+######################################
+Sal_yearly$Max_date<- as.Date.numeric(NA) 
+Sal_yearly$ECP<-as.character(NA) 
+Sal_yearly$Seq_p.value<-as.numeric (NA)
+Sal_yearly$MKLTP_p.value<-as.numeric (NA)
+#######################################
+#######################################
+myts_Annuall<- ts(Sal_yearly$Sal, start=c(min(Sal_yearly$Year)), end=c(max(Sal_yearly$Year)), frequency=1)
+MKLTP_Annuall_Sal<- MannKendallLTP(myts_Annuall)
+capture.output(summary(print(MKLTP_Annuall_Sal)), file = " MKLTP annual salinity.txt")
+Sal_yearly$MKLTP.Sig<- if (MKLTP_Annuall_Sal$Mann_Kendall_LTP[2]>0.01){
+  paste(lapply(MKLTP_Annuall_Sal$Mann_Kendall_LTP[2], round,2))} else {0.001}
+Sal_yearly$Line.pvalue<-if (Sal_yearly$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",Sal_yearly$MKLTP.Sig,")", sep = "")} else{NA}
+Sal_yearly$Mid_date<-min(Sal_yearly$date)
+##view(Sal_yearly)
+############################
+Sal_yearly$Seq<-as.numeric(CP_Sal$cluster) 
+max(Sal_yearly$Seq)
+max(length(Sal_yearly$Seq))
+ddddddddd<-as.numeric( which(CP_Sal$cluster == max(CP_Sal$cluster)))
+Sal_yearly$Seq[max(ddddddddd)+1]
+jj<-max(ddddddddd)
+JJJ<-as.numeric( length(Sal_yearly$Seq))
+Sal_yearly$Seq[max(ddddddddd)+1]
+i=Sal_yearly$Seq[max(ddddddddd)+1]
+Sal_yearly$Seq[jj:JJJ]<- 
+  if(i < as.numeric(Sal_yearly$Seq[max(ddddddddd)])) {as.numeric(max(CP_Sal$cluster)+1)} else{Sal_yearly$Seq}
+
+################# SUBSET THE DATA BASED ON ecp
+
+#for (i in Sal_yearly$Seq){  
+# m<- assign(paste("segment_", i, sep = "_"),subset(Sal_yearly, Seq==i))}
+
+######################################
+##view(Sal_yearly)
+Max_Seq_annuall<-max(Sal_yearly$Seq)
+NNNNN<-plyr::ddply(Sal_yearly, plyr::.(Seq), function(m){
+  FD<-rkt(m$yearfraction,m$Sal)
+  capture.output(summary(print(FD)), file = " Salinity_Annuall MK test results for segments.txt")
+  b0<- median(m$Sal)-(FD$B* median(m$Year))
+  m$overall_slope<- b0+(FD$B*m$Year)
+  a3<-as.character(m$Year[1]) 
+  b3<-as.character(m$Year[length(m$Year)]) 
+  z3<-as.character(lapply(FD$B, round,2))
+  m$`Sens Slope`<- paste( (if (m$Seq==1){"b)"} else if (m$Seq==2){"c)"} else if (m$Seq==3){"d)"} else if (m$Seq==4){"e)"} else if  (m$Seq==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","g/L/yr",sep='')
+  m$Max_date<- if (m$Seq< Max_Seq_annuall){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+  m$ECP<- if (m$Seq< Max_Seq_annuall){paste("ECP", m$Seq, sep = "")} else {as.character (NA)}
+  m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+  ###################################
+  myts_Annuall<- ts(m$Sal, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+  MKLTP_Annuall_Sal<- MannKendallLTP(myts_Annuall)
+  m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Annuall_Sal$Mann_Kendall_LTP[2], round,2),")", sep = "")
+  #########################
+  m$Mid_date<- min(m$date)
+  m$Mean<-as.numeric (mean(m$Sal))
+  m$MKLTP.Sig<- if (MKLTP_Annuall_Sal$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Annuall_Sal$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+  m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+  m$overll_line<-as.numeric (NA)
+  m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+  ########
+  return(m)
+}
+)
+##view(NNNNN)
+##################################
+total_Salinity_annuall <- rbind(Sal_yearly,NNNNN)
+##view(Sal_yearly)
+tiff(paste0(" Annual Salinity_trend_change point ",".tiff"),width=2000, height=1500, res = 350)
+annual_Salinitytrend1<-ggplot(total_Salinity_annuall, aes(x=date, color=`Sens Slope`))+
+  geom_point(aes( y=Sal),size=1)+
+  ggtitle("Annual Trend")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  xlab("Date")+ylab("Salinity (g/L)")
+
+annual_Salinitytrend2<-annual_Salinitytrend1+geom_line(aes(y=overll_line),size=0.8,
+     linetype= if(total_Salinity_annuall$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+
+annual_Salinitytrend2<-annual_Salinitytrend2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+
+annual_Salinitytrend3<-annual_Salinitytrend2+geom_line(aes(y=mLine),size=0.8,
+          linetype= if(total_Salinity_annuall$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})
+################################
+for (i in total_Salinity_annuall$Max_date){
+  annual_Salinitytrend3  <- annual_Salinitytrend3+ 
+    geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+}
+
+annual_Salinitytrend4<-annual_Salinitytrend3+geom_text(mapping = aes(x = Max_date,
+                                                             y = max(Sal),
+                                                             label = ECP,
+                                                             hjust = 1.5,
+                                                             vjust = 1.5),
+                                               size=3,
+                                               angle=90,
+                                               show.legend = FALSE,
+                                               data = total_Salinity_annuall)
+
+annual_Salinitytrend4<- annual_Salinitytrend4+geom_text(mapping = aes(x = Mid_date,
+                                                              y = max(Sal),
+                                                              fill=`Sens Slope`,
+                                                              label = Line.pvalue,
+                                                              hjust =1,
+                                                              vjust = 5.5),
+                                                size=2.5,
+                                                angle=90,
+                                                show.legend = FALSE,
+                                                data = total_Salinity_annuall)
+annual_Salinitytrend4
+dev.off()
+################### A divisive hierarchical estimation algorithm for multiple change point analysis
+################### e.divisive ENERGY DIVISIVE for annuall data
+for(i in 1:5){
+  ED_Annuall=e.divisive(X=Sal1,sig.lvl=0.05,R=199,k=NULL,min.size=10,alpha=1)
+  if(ED_Annuall$p.values[1]<=0.05) {
+    print("End of Loop") ;
+    break
+  } else{print("KHHHH")}
+  
+}
+#view(Sal_yearly)
+#######################
+if (max(ED_Annuall$cluster)<2){capture.output(print("No change point"), file = " EDP No Change point for annuall Salinity.txt")} else{
+  Sal_ED<-Sal_yearly %>% dplyr::select(1:8)
+  Sal_ED$Seq_ED<-as.numeric(ED_Annuall$cluster)
+  ####################
+  #################### MKLTP
+  Sal_ED$MKLTP.Sig<-as.numeric (NA)
+  Sal_ED$Mean<-as.numeric (NA)
+  Sal_ED$Line<-as.numeric (NA)
+  Sal_ED$overll_line<-as.numeric (Sal_ED$overall_slope)
+  Sal_ED$Line.pvalue<-as.character(NA)
+  Sal_ED$mLine<- as.numeric(NA)
+  #####################################
+  Sal_ED$Max_date_ED<- as.Date.numeric(NA) 
+  Sal_ED$EDP<-as.character(NA) 
+  Sal_ED$p.value<-as.numeric (NA)
+  Sal_ED$Seq_p.value<-as.numeric (NA)
+  Sal_ED$MKLTP_p.value<-as.numeric (NA)
+  Sal_ED$Mid_date_ED<-as.Date.numeric(NA)
+  #####################################
+  myts_Annuall_ED<- ts(Sal_ED$Sal, start=c(min(Sal_ED$Year)), end=c(max(Sal_ED$Year)), frequency=1)
+  MKLTP_Annuall_Sal_ED<- MannKendallLTP(myts_Annuall_ED)
+  capture.output(summary(print(MKLTP_Annuall_Sal_ED)), file = " MKLTP annual salinity_ED.txt")
+  Sal_ED$MKLTP.Sig<- if (MKLTP_Annuall_Sal_ED$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Annuall_Sal_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  Sal_ED$Line.pvalue<-if (Sal_ED$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",Sal_ED$MKLTP.Sig,")", sep = "")} else{NA}
+  Sal_ED$Mid_date_ED<-min(Sal_ED$date)
+  ####
+  ddddddddd<-as.numeric( which(ED_Annuall$cluster == max(ED_Annuall$cluster)))
+  max(ddddddddd)
+  str(ddddddddd)
+  Sal_ED$Seq_ED[max(ddddddddd)+1]
+  jj<-max(ddddddddd)
+  JJJ<-as.numeric( length(Sal_ED$Seq_ED))
+  Sal_ED$Seq_ED[max(ddddddddd)+1]
+  i=Sal_ED$Seq_ED[max(ddddddddd)+1]
+  #################
+  
+  #for (i inSal_ED$Seq){  
+  # m<- assign(paste("segment_", i, sep = "_"),subset(Sal_ED, Seq==i))}
+  
+  ######################################
+  Max_Seq_ED_annuall<-max(Sal_ED$Seq_ED)
+  EDPP<-plyr::ddply(Sal_ED, plyr::.(Seq_ED), function(m){
+    FD<-rkt(m$yearfraction,m$Sal)
+    b0<- median(m$Sal)-(FD$B* median(m$Year))
+    m$overall_slope<- b0+(FD$B*m$Year)
+    length(m$Year)
+    a3<-as.character(m$Year[1]) 
+    b3<-as.character(m$Year[length(m$Year)]) 
+    z3<-as.character(lapply(FD$B, round,2))
+    m$`Sens Slope`<- paste( (if (m$Seq_ED==1){"b)"} else if (m$Seq_ED==2){"c)"} else if (m$Seq_ED==3){"d)"} else if (m$Seq_ED==4){"e)"} else if  (m$Seq_ED==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","g/L/yr",sep='')
+    m$Max_date_ED<- if (m$Seq_ED< Max_Seq_ED_annuall){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+    m$p.value<- ED_Annuall$p.values[m$Seq_ED]
+    m$EDP<- if (m$Seq_ED< Max_Seq_ED_annuall){paste("EDP", m$Seq_ED," ","p","(",m$p.value,")", sep = "")} else {as.character (NA)}
+    m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+    m$Mid_date_ED<- median(m$date)
+    #######
+    myts_ED_annual <- ts(m$Sal, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+    MKLTP_Annuall_Sal_ED<- MannKendallLTP( myts_ED_annual)
+    m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Annuall_Sal_ED$Mann_Kendall_LTP[2], round,2),")", sep = "")
+    #########################
+    m$Mid_date_ED<- min(m$date)
+    m$Mean<-as.numeric (mean(m$Sal))
+    m$MKLTP.Sig<- if (MKLTP_Annuall_Sal_ED$Mann_Kendall_LTP[2]>0.01){
+      paste(lapply(MKLTP_Annuall_Sal_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+    m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+    m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+    m$overll_line<-as.numeric (NA)
+    m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+    #######################
+    return(m)
+  }
+  )
+  
+  #####################################################################################
+  total_Sal_annuall_EDP <- rbind(Sal_ED,EDPP)
+  view(Sal_ED)
+  view(EDPP)
+  ##view(total_Sal_annuall_EDP)
+  tiff(paste0(" Annual Sal_trend_EDP change point ",".tiff"),width=2000, height=1500, res = 350)
+  annual_Saltrend_EDP1<-ggplot( total_Sal_annuall_EDP, aes(x=date,color=`Sens Slope`))+
+    geom_point(aes( y=Sal),size=1) +xlab("Date")+ylab("Salinity (g/L)")+
+    ggtitle("Annuall Trend")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+  annual_Saltrend_EDP2<-annual_Saltrend_EDP1+geom_line(aes(y=mLine),size=0.8,
+                           linetype= if( total_Sal_annuall_EDP$MKLTP.Sig<= 0.050){"twodash"} else {"solid"})
+  annual_Saltrend_EDP3<-annual_Saltrend_EDP2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+  annual_Saltrend_EDP4<-annual_Saltrend_EDP3+geom_line(aes(y=overll_line),size=0.8,
+                           linetype= if(total_Sal_annuall_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+  #########
+  
+  for (i in  total_Sal_annuall_EDP$Max_date_ED){
+    annual_Saltrend_EDP4  <- annual_Saltrend_EDP4+ 
+      geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+  }
+  
+  annual_Saltrend_EDP4<-annual_Saltrend_EDP4+geom_text(mapping = aes(x = Max_date_ED,
+                                                                       y = max(Sal),
+                                                                       label = EDP,
+                                                                       hjust = 1.5,
+                                                                       vjust = 1.5),
+                                                         size=3,
+                                                         angle=90,
+                                                         show.legend = FALSE,
+                                                         data =total_Sal_annuall_EDP)
+  
+  annual_Saltrend_EDP4<- annual_Saltrend_EDP4+geom_text(mapping = aes(x = Mid_date_ED,
+                                                                        y = max(Sal),
+                                                                        label = Line.pvalue,
+                                                                        hjust =1,
+                                                                        vjust = 5.5),
+                                                          size=2.5,
+                                                          angle=90,
+                                                          show.legend = FALSE,
+                                                          data =total_Sal_annuall_EDP)
+  annual_Saltrend_EDP4
+}# end of if
+dev.off()
+###################################### WET OR DRY SEASON
+###################################### SEASONAL SMK TEST
+Sal_season<- Sal_monthly %>%
+  mutate(season = case_when(
+    Month %in% 5:10 ~ "Wet",
+    Month %in%  11:12  ~ "Dry",
+    Month %in%  1:4  ~ "Dry"))
+Sal_wetseason <- subset(Sal_season, season %in% c("Wet"))
+Sal_dryseason <- subset(Sal_season, season %in% c("Dry"))
+plot(Sal_dryseason$Sal)
+plot(Sal_wetseason$Sal)
+#######################################
+#######################################################
+##################### SMK test for  Salinity in wet and dry season
+Tr_Sal_Dryseason<-rkt(Sal_dryseason$Year,Sal_dryseason$Sal,Sal_dryseason$Month,,TRUE)
+print(Tr_Sal_Dryseason)
+capture.output(summary(print(Tr_Sal_Dryseason)), file = "Sal_dryseason SMK test results.txt")
+
+Tr_Sal_Wetseason<-rkt(Sal_wetseason$Year,Sal_wetseason$Sal,Sal_wetseason$Month,,TRUE)
+print(Tr_Sal_Wetseason)
+capture.output(summary(print(Tr_Sal_Wetseason)), file = " Sal_Wetseason SMK test results.txt")
+#####################################################################
+#Plooying CDFM for wetseason
+################################
+Sal_dryseason<-Sal_dryseason %>% dplyr::select(1:6,10)
+Mean_dry<- mean(Sal_dryseason$Sal)
+Sal_dryseason$pi_dry=((Sal_dryseason$Sal-Mean_dry)/6)
+Sal_dryseason$CDFM_dry<- cumsum(Sal_dryseason$pi_dry) # replace the cell freq.s by cumulative freq.s
+################ wet
+Sal_wetseason<-Sal_wetseason %>% dplyr::select(1:6,10)
+Mean_wet<- mean(Sal_wetseason$Sal)
+Sal_wetseason$pi_wet=((Sal_wetseason$Sal-Mean_wet)/6)
+Sal_wetseason$CDFM_wet<- cumsum(Sal_wetseason$pi_wet) 
+##################################
+###############  dry monthly lAN TEST
+s.res <- lanzante.test(Sal_dryseason$Sal)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean(Sal_dryseason$Sal[1:i])
+s.2 <- mean(Sal_dryseason$Sal[(i+1):n])
+sd <-(c(rep(s.1,i), rep(s.2,(n-i))))
+sd<-as.data.frame(as.numeric(sd))
+Sal_dryseason$sd<-sd$`as.numeric(sd)`
+p_value <- s.res$p.value
+str(p_value)
+hhh<- if(p_value > 0.05){print("LAT (p>0.05)")} else if(p_value > 0.01 & p_value < 0.05){print("LAT (p<0.05)")} else{print("LAT (p<0.01)")}
+my_text1 <- hhh
+my_grob1 = grid.text(my_text1, gp=gpar(col="black", fontsize=7, fontface="bold"))
+year1=Sal_dryseason[i,2]
+lims<- c(min= as.Date(min(Sal_dryseason$date)), max= as.Date(max(Sal_dryseason$date)))
+Sal_dry<-ggplot(Sal_dryseason)+geom_line(aes(x=date, y=Sal),color= "grey")
+Sal_dry<-Sal_dry+geom_line(aes(x=date, y=CDFM_dry),alpha = 0.6, size = 0.7,color= "blue")
+Sal_dry1<-Sal_dry+geom_smooth(aes(x=date, y=CDFM_dry),method="gam",color="red")+xlab("Date")+ylab("Sal (g/L/month)")
+Sal_dry2<-Sal_dry1+scale_y_continuous(sec.axis = sec_axis(name ="CDFM (g/L)",~ . + 0))
+Sal_dry3<-Sal_dry2+geom_vline(aes(xintercept = year1),size = 0.7,color= "black",linetype="dashed")
+Sal_dry4<-Sal_dry3+geom_line(aes(x=date,y=sd),color= "black")+ggtitle("Dry Seasons")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  annotation_custom(my_grob1, xmin = as.Date(max(year1,100)), xmax = as.Date(max(year1,100)), ymin =max(Sal_dryseason$Sal), ymax = max(Sal_dryseason$Sal))
+Sal_dry4
+dev.off()
+##############
+###############  wet monthly lAN TEST
+s.res <- lanzante.test(Sal_wetseason$Sal)
+n <- s.res$nobs
+i <- s.res$estimate
+s.1 <- mean(Sal_wetseason$Sal[1:i])
+s.2 <- mean(Sal_wetseason$Sal[(i+1):n])
+sd <-(c(rep(s.1,i), rep(s.2,(n-i))))
+sd<-as.data.frame(as.numeric(sd))
+Sal_wetseason$sd<-sd$`as.numeric(sd)`
+p_value <- s.res$p.value
+str(p_value)
+hwet<- if(p_value > 0.05){print("LAT (p>0.05)")} else if(p_value > 0.01 & p_value < 0.05){print("LAT (p<0.05)")} else{print("LAT (p<0.01)")}
+my_text2 <- hwet
+my_grob2 = grid.text(my_text2, gp=gpar(col="black", fontsize=7, fontface="bold"))
+year2=Sal_wetseason[i,2]
+lims<- c(min= as.Date(min(Sal_wetseason$date)), max= as.Date(max(Sal_wetseason$date)))
+Sal_wet<-ggplot(Sal_wetseason)+geom_line(aes(x=date, y=Sal),color= "grey")
+Sal_wet<-Sal_wet+geom_line(aes(x=date, y=CDFM_wet),alpha = 0.6, size = 0.7,color= "blue")
+Sal_wet1<-Sal_wet+geom_smooth(aes(x=date, y=CDFM_wet),method="gam",color="red")+xlab("Date")+ylab("Sal (g/L/month)")
+Sal_wet2<-Sal_wet1+scale_y_continuous(sec.axis = sec_axis(name ="CDFM (g/L)",~ . + 0))
+Sal_wet3<-Sal_wet2+geom_vline(aes(xintercept = year2),size = 0.7,color= "black",linetype="dashed")
+Sal_wet4<-Sal_wet3+geom_line(aes(x=date,y=sd),color= "black")+ggtitle("Wet Seasons")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  annotation_custom(my_grob2, xmin = as.Date(max(year2,100)), xmax = as.Date(max(year2,100)), ymin =max(Sal_wetseason$Sal), ymax = max(Sal_wetseason$Sal))
+Sal_wet4
+dev.off()
+#####################
+tiff(paste0("CDFM_Sal",".tiff"),width=2000, height=2500, res = 350)
+zk<-ggarrange(Salmonthly11,Sal_dry4,Sal_wet4, nrow =3, ncol =1, heights = c(10, 10,10),
+              widths =c(0.5) )
+dev.off()
+########################################
+
+################################## orginal mann-kendal test
+########## change point for wet and dry season ANNUALY   
+Sal_wetseason
+ts_wet <- xts(Sal_wetseason$Sal, as.Date(Sal_wetseason$date, "%Y-%m-%d"))
+# convert daily data
+ts_wet_y = apply.yearly(ts_wet, mean)
+ts_y_w= data.frame(sum_Sal=coredata(ts_wet_y),date=index(ts_wet_y))
+
+Sal_wet<- data.frame(date = ts_y_w$date,
+                      Year = as.numeric(format(ts_y_w$date, format = "%Y")),
+                      Month = as.numeric(format(ts_y_w$date, format = "%m")),
+                      Day = as.numeric(format(ts_y_w$date, format = "%d")))
+Sal_wet
+Sal_wet$sum_Sal<-ts_y_w$sum_Sal
+Sal_wet$yearfraction<-(Sal_wet$Year+0.110)
+#view(Sal_wet)
+#####################################
+#####################################ECP change point wet season
+Sal_wet1<-Sal_wet%>%dplyr::select(5)
+Sal_wet1<- as.matrix(Sal_wet1)
+x3= rep(c(min(Sal_wet$Year):max(Sal_wet$Year)), times= c(1))
+##################################### mem
+n1=length(Sal_wet$date)
+num=1
+mem1 <- vector()
+
+while (n1>8) {
+  
+  x= rep(c(num), times= c(8))
+  
+  n1=n1-8
+  
+  num=num+1
+  
+  mem1 <- append(mem1, x)
+  
+}
+
+x= rep(c(num), times= c(n1))
+
+mem1 <- append(mem1, x)
+
+print(mem1)
+
+#### mem= rep=shows possible number of change point and time should the same as x=rainfall length
+CP_Sal_wet= e.agglo(Sal_wet1,member=mem1,alpha=2,penalty=function(cp,Xts) 0)
+tiff(paste0(" ECP change point for annual wet Salinity",".tiff"),width=1500, height=1000, res = 300)
+CP_Sal_wet$progression
+plot(x3, CP_Sal_wet$cluster,
+     main="ECP test annual wet Sal",
+     xlab = "Year",
+     ylab="cluster",
+     type="p",
+     col="blue")
+dev.off()
+
+########################################## orginal MK test for Salinity wet
+TR_wet_Sal<-rkt(Sal_wet$yearfraction,Sal_wet$sum_Sal)
+print(TR_wet_Sal)
+capture.output(summary(print(TR_wet_Sal)), file = " Salinity_annual_wet MK test results.txt")
+TR_wet_Sal$B
+b0<- median(Sal_wet$sum_Sal)-(TR_wet_Sal$B * median(Sal_wet$Year))
+Sal_wet$overall_slope<- b0+(TR_wet_Sal$B * Sal_wet$Year)
+length(Sal_wet$Year)
+a2<-as.character(Sal_wet$Year[1]) 
+b2<-as.character(Sal_wet$Year[length(Sal_wet$Year)]) 
+z2<-as.character(lapply(TR_wet_Sal$B, round,2))
+Sal_wet$`Sens Slope`<- paste("a)",a2,"-",b2,":"," ",z2," ","g/L/yr",sep='')
+
+################################################## MKLTP
+Sal_wet$MKLTP.Sig<-as.numeric (NA)
+Sal_wet$Mean<-as.numeric (NA)
+Sal_wet$Line<-as.numeric (NA)
+Sal_wet$overll_line<-as.numeric (Sal_wet$overall_slope)
+Sal_wet$Line.pvalue<-as.character(NA)
+Sal_wet$Mid_date<-as.Date.numeric(NA)
+Sal_wet$mLine<- as.numeric (NA)
+#######################
+myts_Wet<- ts(Sal_wet$sum_Sal, start=c(min(Sal_wet$Year)), end=c(max(Sal_wet$Year)), frequency=1)
+MKLTP_Wet_Sal<- MannKendallLTP(myts_Wet)
+capture.output(summary(print(MKLTP_Wet_Sal)), file = " MKLTP annual salinity_WET.txt")
+Sal_wet$MKLTP.Sig<- if (MKLTP_Wet_Sal$Mann_Kendall_LTP[2]>0.01){
+  paste(lapply(MKLTP_Wet_Sal$Mann_Kendall_LTP[2], round,2))} else {0.001}
+Sal_wet$Line.pvalue<-if (Sal_wet$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",Sal_wet$MKLTP.Sig,")", sep = "")} else{NA}
+Sal_wet$Mid_date<-min(Sal_wet$date)
+############################
+Sal_wet$Seq<-as.numeric(CP_Sal_wet$cluster) 
+max(Sal_wet$Seq)
+max(length(Sal_wet$Seq))
+ddddddddd<-as.numeric( which(CP_Sal_wet$cluster == max(CP_Sal_wet$cluster)))
+max(ddddddddd)
+str(ddddddddd)
+Sal_wet$Seq[max(ddddddddd)+1]
+jj<-max(ddddddddd)
+JJJ<-as.numeric( length(Sal_wet$Seq))
+Sal_wet$Seq[max(ddddddddd)+1]
+#Salinity_dry$Seq<-if (Salinity_dry$Seq[max(ddddddddd)+1]< Salinity_dry$Seq[max(ddddddddd)]){ Salinity_dry$Seq[jj:JJJ]==max(CP_Salinity_dry$cluster)+1}
+i=Sal_wet$Seq[max(ddddddddd)+1]
+Sal_wet$Seq[jj:JJJ]<- 
+  if(i < as.numeric(Sal_wet$Seq[max(ddddddddd)])) {as.numeric(max(CP_Sal_wet$cluster)+1)} else{Sal_wet$Seq}
+###view(Sal_wet)
+Sal_wet$Max_date<- as.Date.numeric(NA) 
+Sal_wet$ECP<-as.character(NA) 
+Sal_wet$Seq_p.value<-as.numeric (NA)
+Sal_wet$MKLTP_p.value<-as.numeric (NA)
+max(Sal_wet$Seq)
+#################
+#for (i in Sal_wet$Seq){  
+# m<- assign(paste("segment_wet", i, sep = "_"),subset(Sal_wet, Seq==i))}
+######################################
+Max_Seq_wet<-max(Sal_wet$Seq)
+SSSSS<-plyr::ddply(Sal_wet, plyr::.(Seq), function(m){
+  FD<-rkt(m$yearfraction,m$sum_Sal)
+  b0<- median(m$sum_Sal)-(FD$B* median(m$Year))
+  m$overall_slope<- b0+(FD$B*m$Year)
+  length(m$Year)
+  a3<-as.character(m$Year[1]) 
+  b3<-as.character(m$Year[length(m$Year)]) 
+  z3<-as.character(lapply(FD$B, round,2))
+  m$`Sens Slope`<- paste( (if (m$Seq==1){"b)"} else if (m$Seq==2){"c)"} else if (m$Seq==3){"d)"} else if (m$Seq==4){"e)"} else if  (m$Seq==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","g/L/yr",sep='')
+  m$Max_date<- if (m$Seq< Max_Seq_wet){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+  m$ECP<- if (m$Seq< Max_Seq_wet){paste("ECP", m$Seq, sep = "")} else {as.character (NA)}
+  m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+  #############
+  myts_Wet <- ts(m$sum_Sal, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+  MKLTP_Wet_Sal<- MannKendallLTP(myts_Wet)
+  m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Wet_Sal$Mann_Kendall_LTP[2], round,2),")", sep = "")
+  ############################
+  m$Mid_date<- min(m$date)
+  m$Mean<-as.numeric (mean(m$sum_Sal))
+  m$MKLTP.Sig<- if (MKLTP_Wet_Sal$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Wet_Sal$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+  m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+  m$overll_line<-as.numeric (NA)
+  m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+  #################
+  print(m$ECP)
+  return(m)
+}
+)
+##view(SSSSS)
+###############################
+total_Sal_wet <- rbind(Sal_wet,SSSSS)
+###############
+tiff(paste0(" Annual Sal_wet_trend_change point ",".tiff"),width=2000, height=1500, res = 350)
+Wet_Saltrend1<-ggplot(total_Sal_wet, aes(x=date, color=`Sens Slope`))+
+  geom_point(aes(y=sum_Sal, color=`Sens Slope`),size=1)+
+  ggtitle("Wet Seasons Trend")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+
+  xlab("Date")+ylab("Salinity (g/L)")
+Wet_Saltrend2<-Wet_Saltrend1+geom_line(aes(y=overll_line),size=0.8,
+                linetype= if(total_Sal_wet$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+Wet_Saltrend3<-Wet_Saltrend2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+Wet_Saltrend4<-Wet_Saltrend3+geom_line(aes(y=mLine),size=0.8,
+              linetype= if(total_Sal_wet$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})                                         
+
+#################
+for (i in total_Sal_wet$Max_date){
+  Wet_Saltrend4<- Wet_Saltrend4+ 
+    geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+}
+
+Wet_Saltrend4<-Wet_Saltrend4+geom_text(mapping = aes(x = Max_date,
+                                                       y = max(sum_Sal),
+                                                       label = ECP,
+                                                       hjust = 1.5,
+                                                       vjust = 1.5),
+                                         size=2.5,
+                                         angle=90,
+                                         show.legend = FALSE,
+                                         data = total_Sal_wet)
+
+Wet_Saltrend4<-Wet_Saltrend4+geom_text(mapping = aes(x=Mid_date,
+                                                       y = max(sum_Sal),
+                                                       fill=`Sens Slope`,
+                                                       label = Line.pvalue,
+                                                       hjust = 1,
+                                                       vjust = 3),
+                                         size=2.5,
+                                         angle=90,
+                                         show.legend = FALSE,
+                                         data = total_Sal_wet)
+
+Wet_Saltrend4
+dev.off()
+########################################
+################### A divisive hierarchical estimation algorithm for multiple change point analysis
+################### e.divisive ENERGY DIVISIVE for annuall data
+for(i in 1:5){
+  ED_Wet=e.divisive(X=Sal_wet1,sig.lvl=0.05,R=199,k=NULL,min.size=10,alpha=1)
+  if(ED_Wet$p.values[1]<=0.05) {
+    print("End of Loop") ;
+    break
+  } else{print("KHHHH")}
+  
+}
+
+if (max(ED_Wet$cluster)<2){capture.output(print("No change point"), file = " EDP No Change point for wet season Sal.txt")} else{
+  Sal_ED_Wet<-Sal_wet%>%dplyr::select(1:8)
+  Sal_ED_Wet$Seq_ED<-as.numeric(ED_Wet$cluster) 
+  ########################################
+  ##view(Sal_ED_Wet)
+  ################################################## MKLTP
+  Sal_ED_Wet$MKLTP.Sig<-as.numeric (NA)
+  Sal_ED_Wet$Mean<-as.numeric (NA)
+  Sal_ED_Wet$Line<-as.numeric (NA)
+  Sal_ED_Wet$overll_line<-as.numeric (Sal_ED_Wet$overall_slope)
+  Sal_ED_Wet$Line.pvalue<-as.character(NA)
+  Sal_ED_Wet$mLine<- as.numeric (NA)
+  ########################
+  Sal_ED_Wet$Max_date_ED<- as.Date.numeric(NA) 
+  Sal_ED_Wet$EDP<-as.character(NA) 
+  Sal_ED_Wet$p.value<-as.numeric (NA)
+  Sal_ED_Wet$Seq_p.value<-as.numeric (NA)
+  Sal_ED_Wet$MKLTP_p.value<-as.numeric (NA)
+  Sal_ED_Wet$Mid_date_ED<-as.Date.numeric(NA)
+  ###################################
+  myts_Wet_ED<- ts(Sal_ED_Wet$sum_Sal, start=c(min(Sal_ED_Wet$Year)), end=c(max(Sal_ED_Wet$Year)), frequency=1)
+  MKLTP_Wet_Sal_ED<- MannKendallLTP(myts_Wet_ED)
+  capture.output(summary(print(MKLTP_Wet_Sal_ED)), file = " MKLTP annual salinity_WET_ED.txt")
+  Sal_ED_Wet$MKLTP.Sig<- if (MKLTP_Wet_Sal_ED$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Wet_Sal_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  Sal_ED_Wet$Line.pvalue<-if (Sal_ED_Wet$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",Sal_ED_Wet$MKLTP.Sig,")", sep = "")} else{NA}
+  Sal_ED_Wet$Mid_date_ED<-min(Sal_ED_Wet$date)
+  ############################
+  ###########################
+  ddddddddd<-as.numeric( which(ED_Wet$cluster == max(ED_Wet$cluster)))
+  Sal_ED_Wet$Seq_ED[max(ddddddddd)+1]
+  jj<-max(ddddddddd)
+  JJJ<-as.numeric( length(Sal_ED_Wet$Seq_ED))
+  Sal_ED_Wet$Seq_ED[max(ddddddddd)+1]
+  #Sal_ED_Wet_dry$Seq<-if (Sal_ED_Wet_dry$Seq[max(ddddddddd)+1]< Sal_ED_Wet_dry$Seq[max(ddddddddd)]){ Sal_ED_Wet_dry$Seq[jj:JJJ]==max(CP_Sal_ED_Wet_dry$cluster)+1}
+  i=Sal_ED_Wet$Seq_ED[max(ddddddddd)+1]
+  #Sal_ED_Wet$Seq_ED[jj:JJJ]<- 
+  # if(i < as.numeric(Sal_ED_Wet$Seq_ED[max(ddddddddd)])) {as.numeric(max(ED_Wet$cluster)+1)} else{Sal_ED_Wet$Seq_ED}
+  #################
+  #for (i in Sal_ED_Wet$Seq){  
+  # m<- assign(paste("segment_", i, sep = "_"),subset(Sal_ED_Wet, Seq==i))}
+  ######################################
+  Max_Seq_ED_Wet<-max(Sal_ED_Wet$Seq_ED)
+  EDPP<-plyr::ddply(Sal_ED_Wet, plyr::.(Seq_ED), function(m){
+    FD<-rkt(m$yearfraction,m$sum_Sal)
+    b0<- median(m$sum_Sal)-(FD$B* median(m$Year))
+    m$overall_slope<- b0+(FD$B*m$Year)
+    length(m$Year)
+    a3<-as.character(m$Year[1]) 
+    b3<-as.character(m$Year[length(m$Year)]) 
+    z3<-as.character(lapply(FD$B, round,2))
+    m$`Sens Slope`<- paste( (if (m$Seq_ED==1){"b)"} else if (m$Seq_ED==2){"c)"} else if (m$Seq_ED==3){"d)"} else if (m$Seq_ED==4){"e)"} else if  (m$Seq_ED==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","g/L/yr",sep='')
+    m$Max_date_ED<- if (m$Seq_ED< Max_Seq_ED_Wet){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+    m$p.value<- ED_Wet$p.values[m$Seq_ED]
+    m$EDP<- if (m$Seq_ED< Max_Seq_ED_Wet){paste("EDP", m$Seq_ED," ","p","(",m$p.value,")", sep = "")} else {as.character (NA)}
+    m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+    ######
+    myts_Wet_ED <- ts(m$sum_Sal, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+    MKLTP_Wet_Sal_ED<- MannKendallLTP(myts_Wet_ED)
+    m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Wet_Sal_ED$Mann_Kendall_LTP[2], round,2),")", sep = "")
+    ########################
+    m$Mid_date_ED<- min(m$date)
+    m$Mean<-as.numeric (mean(m$sum_Sal))
+    m$MKLTP.Sig<- if (MKLTP_Wet_Sal_ED$Mann_Kendall_LTP[2]>0.01){
+      paste(lapply(MKLTP_Wet_Sal_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+    m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+    m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+    m$overll_line<-as.numeric (NA)
+    m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+    #################
+    return(m)
+  }
+  )
+  
+  #####################################################################################
+  total_Sal_Wet_EDP <- rbind(Sal_ED_Wet,EDPP)
+  ##view(Sal_ED_Wet)
+  #view( total_Sal_Wet_EDP)
+  tiff(paste0(" Wet_trend_EDP change point ",".tiff"),width=2000, height=1500, res = 350)
+  Wet_Saltrend_EDP1<-ggplot( total_Sal_Wet_EDP, aes(x=date, color=`Sens Slope`))+
+    geom_point(aes(y=sum_Sal, color=`Sens Slope`),size=1)+xlab("Date")+ylab("Salinity (g/L)")+
+    ggtitle("Wet Season Trend")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+  Wet_Saltrend_EDP2<-Wet_Saltrend_EDP1+geom_line(aes(y=overll_line),size=0.8,
+                        linetype= if( total_Sal_Wet_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+  Wet_Saltrend_EDP3<-Wet_Saltrend_EDP2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+  Wet_Saltrend_EDP4<-Wet_Saltrend_EDP3+ geom_line(aes(y=mLine),size=0.8,
+                        linetype= if( total_Sal_Wet_EDP$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})                                         
+  
+  ##########
+  
+  for (i in  total_Sal_Wet_EDP$Max_date_ED){
+    Wet_Saltrend_EDP4  <- Wet_Saltrend_EDP4+ 
+      geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+  }
+  
+  Wet_Saltrend_EDP4<-Wet_Saltrend_EDP4+geom_text(mapping = aes(x = Max_date_ED,
+                                                                 y = max(sum_Sal),
+                                                                 label = EDP,
+                                                                 hjust = 1.5,
+                                                                 vjust = 1.5),
+                                                   size=3,
+                                                   angle=90,
+                                                   show.legend = FALSE,
+                                                   data =  total_Sal_Wet_EDP)
+  
+  Wet_Saltrend_EDP4<-Wet_Saltrend_EDP4+geom_text(mapping = aes(x = Mid_date_ED,
+                                                                 y = max(sum_Sal),
+                                                                 label = Line.pvalue,
+                                                                 hjust = 1,
+                                                                 vjust = 5.5), 
+                                                   size=2.5,  
+                                                   angle=90,
+                                                   show.legend = FALSE,
+                                                   data =  total_Sal_Wet_EDP)
+  Wet_Saltrend_EDP4
+  
+}# end of if
+dev.off()
+############################
+################################## orginal mann-kendal test
+########## change point for dry season ANNUALY   
+Sal_dryseason
+ts_dry <- xts(Sal_dryseason$Sal, as.Date(Sal_dryseason$date, "%Y-%m-%d"))
+# convert daily data
+ts_dry_y = apply.yearly(ts_dry, mean)
+ts_y_d= data.frame(sum_Sal=coredata(ts_dry_y),date=index(ts_dry_y))
+
+Sal_dry<- data.frame(date = ts_y_d$date,
+                      Year = as.numeric(format(ts_y_d$date, format = "%Y")),
+                      Month = as.numeric(format(ts_y_d$date, format = "%m")),
+                      Day = as.numeric(format(ts_y_d$date, format = "%d")))
+Sal_dry$sum_Sal<-ts_y_d$sum_Sal
+Sal_dry$yearfraction<-(Sal_dry$Year+0.110)
+##view(Sal_dry)
+#####################################
+#####################################ECP change point wet season
+Sal_dry1<-Sal_dry %>% dplyr::select(5)
+Sal_dry1<- as.matrix(Sal_dry1)
+x4= rep(c(min(Sal_dry$Year):max(Sal_dry$Year)), times= c(1))
+##################################### mem
+n3=length(Sal_dry$date)
+num=1
+mem3 <- vector()
+
+while (n3>8) {
+  
+  x= rep(c(num), times= c(8))
+  
+  n3=n3-8
+  
+  num=num+1
+  
+  mem3 <- append(mem3, x)
+  
+}
+
+x= rep(c(num), times= c(n3))
+
+mem3 <- append(mem3, x)
+
+print(mem3)
+
+#### mem= rep=shows possible number
+CP_Sal_dry= e.agglo(Sal_dry1,member=mem3,alpha=2,penalty=function(cp,Xts) 0)
+CP_Sal_dry$estimates
+CP_Sal_dry$cluster
+
+tiff(paste0(" ECP change point for annual dry Sal",".tiff"),width=1500, height=1000, res = 300)
+CP_Sal_dry$progression
+#plot(CP_Sal_dry$cluster)
+plot(x4, CP_Sal_dry$cluster,
+     main="ECP test annual dry Salinity",
+     xlab = "Year",
+     ylab="cluster",
+     type="p",
+     col="blue")
+dev.off()
+########################################## orginal MK test for Dry Salinity
+Sal_dry
+TR_dry_Sal<-rkt(Sal_dry$yearfraction,Sal_dry$sum_Sal)
+print(TR_dry_Sal)
+capture.output(summary(print(TR_dry_Sal)), file = " Salinity_annual_dry MK test results.txt")
+TR_dry_Sal$B
+b0<- median(Sal_dry$sum_Sal)-(TR_dry_Sal$B * median(Sal_dry$Year))
+Sal_dry$overall_slope<- b0+(TR_dry_Sal$B * Sal_dry$Year)
+length(Sal_dry$Year)
+a5<-as.character(Sal_dry$Year[1]) 
+b5<-as.character(Sal_dry$Year[length(Sal_dry$Year)]) 
+z5<-as.character(lapply(TR_dry_Sal$B, round,2))
+Sal_dry$`Sens Slope`<- paste("a)",a5,"-",b5,":"," ",z5," ","g/L/yr",sep='')
+##################################################
+################################################## MKLTP
+Sal_dry$MKLTP.Sig<-as.numeric (NA)
+Sal_dry$Mean<-as.numeric (NA)
+Sal_dry$Line<-as.numeric (NA)
+Sal_dry$overll_line<-as.numeric (Sal_dry$overall_slope)
+Sal_dry$Line.pvalue<-as.character(NA)
+Sal_dry$Mid_date<-as.Date.numeric(NA)
+Sal_dry$mLine<- as.numeric(NA)
+######################################
+myts_Dry<- ts(Sal_dry$sum_Sal, start=c(min(Sal_dry$Year)), end=c(max(Sal_dry$Year)), frequency=1)
+MKLTP_Dry_Sal<- MannKendallLTP(myts_Dry)
+capture.output(summary(print(MKLTP_Dry_Sal)), file = " MKLTP annual salinity_DRY.txt")
+Sal_dry$MKLTP.Sig<- if (MKLTP_Dry_Sal$Mann_Kendall_LTP[2]>0.01){
+  paste(lapply(MKLTP_Dry_Sal$Mann_Kendall_LTP[2], round,2))} else {0.001}
+Sal_dry$Line.pvalue<-if (Sal_dry$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",Sal_dry$MKLTP.Sig,")", sep = "")} else{NA}
+Sal_dry$Mid_date<-min(Sal_dry$date)
+############################
+Sal_dry$Seq<-as.numeric(CP_Sal_dry$cluster)
+ddddddddd<-as.numeric( which(CP_Sal_dry$cluster == max(CP_Sal_dry$cluster)))
+Sal_dry$Seq[max(ddddddddd)+1]
+jj<-max(ddddddddd)
+JJJ<-as.numeric( length(Sal_dry$Seq))
+Sal_dry$Seq[max(ddddddddd)+1]
+i=Sal_dry$Seq[max(ddddddddd)+1]
+Sal_dry$Seq[jj:JJJ]<- 
+  if(i < as.numeric(Sal_dry$Seq[max(ddddddddd)])) {as.numeric(max(CP_Sal_dry$cluster)+1)} else{Sal_dry$Seq}
+##########################################
+Sal_dry$Max_date<- as.Date.numeric(NA) 
+Sal_dry$ECP<-as.character(NA)
+Sal_dry$Seq_p.value<-as.numeric (NA)
+Sal_dry$MKLTP_p.value<-as.numeric (NA)
+#################
+
+#for (i in Sal_dry$Seq){  
+# m<- assign(paste("segment_wet", i, sep = "_"),subset(Sal_dry, Seq==i))}
+
+######################################
+Max_Seq_dry<-max(Sal_dry$Seq)
+VVVVV<-plyr::ddply(Sal_dry, plyr::.(Seq), function(m){
+  FD<-rkt(m$yearfraction,m$sum_Sal)
+  b0<- median(m$sum_Sal)-(FD$B* median(m$Year))
+  m$overall_slope<- b0+(FD$B*m$Year)
+  a6<-as.character(m$Year[1]) 
+  b6<-as.character(m$Year[length(m$Year)]) 
+  z6<-as.character(lapply(FD$B, round,2))
+  m$`Sens Slope`<- paste( (if (m$Seq==1){"b)"} else if (m$Seq==2){"c)"} else if (m$Seq==3){"d)"} else if (m$Seq==4){"e)"} else if  (m$Seq==5){"f)"} else {"g)"}) ,a6,"-",b6,":"," ",z6," ","g/L/yr",sep='')
+  m$Max_date<- if (m$Seq< Max_Seq_dry){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+  m$ECP<- if (m$Seq< Max_Seq_dry){paste("ECP", m$Seq, sep = "")} else {as.character (NA)}
+  m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+  ######
+  myts_Dry <- ts(m$sum_Sal, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+  MKLTP_Dry_Sal<- MannKendallLTP(myts_Dry)
+  m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Dry_Sal$Mann_Kendall_LTP[2], round,2),")", sep = "")
+  ############################
+  m$Mid_date<- min(m$date)
+  m$Mean<-as.numeric (mean(m$sum_Sal))
+  m$MKLTP.Sig<- if (MKLTP_Dry_Sal$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Dry_Sal$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+  m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+  m$overll_line<-as.numeric (NA)
+  m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+  #################
+  
+  print(m$ECP)
+  return(m)
+}
+)
+
+###view(VVVVV)
+#####################################
+total_Sal_dry <- rbind(Sal_dry,VVVVV)
+####view(total_Sal_dry)
+tiff(paste0(" Annual Salinity_dry_trend_change point ",".tiff"),width=2000, height=1500, res = 350)
+Dry_Saltrend1<-ggplot(total_Sal_dry, aes(x=date, color=`Sens Slope`))+
+  geom_point(aes(y=sum_Sal, color=`Sens Slope`),size=1)+xlab("Date")+ylab("Salinity (g/L)")+
+  ggtitle("Dry Seasons Trend")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+
+Dry_Saltrend2<-Dry_Saltrend1+ geom_line(aes(y=overll_line),size=0.8,
+               linetype= if(total_Sal_dry$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} )
+Dry_Saltrend3<-Dry_Saltrend2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+Dry_Saltrend4<-Dry_Saltrend3+geom_line(aes(y=mLine),size=0.8,
+               linetype= if(total_Sal_dry$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})
+######################
+for (i in total_Sal_dry$Max_date){
+  Dry_Saltrend4  <- Dry_Saltrend4+ 
+    geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+}
+
+Dry_Saltrend4<-Dry_Saltrend4+geom_text(mapping = aes(x = Max_date,
+                                                       y = max(sum_Sal),
+                                                       label = ECP,
+                                                       hjust = 1.5,
+                                                       vjust = 1.5),
+                                         size=2.5,
+                                         angle=90,
+                                         show.legend = FALSE,
+                                         data = total_Sal_dry)
+Dry_Saltrend4<- Dry_Saltrend4+geom_text(mapping = aes(x = Mid_date,
+                                                        y = max(sum_Sal),
+                                                        fill=`Sens Slope`,
+                                                        label = Line.pvalue,
+                                                        hjust = 1,
+                                                        vjust = 5.5),
+                                          size=2.5,
+                                          angle=90,
+                                          show.legend = FALSE,
+                                          data = total_Sal_dry)
+
+
+Dry_Saltrend4
+
+dev.off()
+
+######################################################################################
+################### A divisive hierarchical estimation algorithm for multiple change point analysis
+################### e.divisive ENERGY DIVISIVE for annuall data
+Sal_dry1
+for(i in 1:15){
+  ED_Dry=e.divisive(X=Sal_dry1,sig.lvl=0.05,R=199,k=NULL,min.size=10,alpha=1)
+  if(ED_Dry$p.values[1]<=0.05) {
+    print("End of Loop") ;
+    break
+  } else{print("KHHHH")}
+  
+}
+###view(Sal_dry)
+if (max(ED_Dry$cluster)<2){capture.output(print("No change point"), file = " EDP No Change point for Dry season Salinity.txt")} else{
+  Sal_ED_Dry<-Sal_dry %>% dplyr::select(1:8)
+  Sal_ED_Dry$Seq_ED<-as.numeric(ED_Dry$cluster) 
+  ################################################
+  ################################################## MKLTP
+  Sal_ED_Dry$MKLTP.Sig<-as.numeric (NA)
+  Sal_ED_Dry$Mean<-as.numeric (NA)
+  Sal_ED_Dry$Line<-as.numeric (NA)
+  Sal_ED_Dry$overll_line<-as.numeric (Sal_ED_Dry$overall_slope)
+  Sal_ED_Dry$Line.pvalue<-as.character(NA)
+  Sal_ED_Dry$mLine<- as.numeric(NA)
+  #####################################################
+  Sal_ED_Dry$Max_date_ED<- as.Date.numeric(NA) 
+  Sal_ED_Dry$EDP<-as.character(NA) 
+  Sal_ED_Dry$p.value<-as.numeric (NA)
+  Sal_ED_Dry$Seq_p.value<-as.numeric (NA)
+  Sal_ED_Dry$MKLTP_p.value<-as.numeric (NA)
+  Sal_ED_Dry$Mid_date_ED<-as.Date.numeric(NA)
+  ##################################################
+  ######################################
+  myts_Dry_ED<- ts(Sal_ED_Dry$sum_Sal, start=c(min(Sal_ED_Dry$Year)), end=c(max(Sal_ED_Dry$Year)), frequency=1)
+  MKLTP_Dry_Sal_ED<- MannKendallLTP(myts_Dry_ED)
+  capture.output(summary(print(MKLTP_Dry_Sal_ED)), file = " MKLTP annual salinity_DRY_ED.txt")
+  Sal_ED_Dry$MKLTP.Sig<- if (MKLTP_Dry_Sal_ED$Mann_Kendall_LTP[2]>0.01){
+    paste(lapply(MKLTP_Dry_Sal_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+  Sal_ED_Dry$Line.pvalue<-if (Sal_ED_Dry$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",Sal_ED_Dry$MKLTP.Sig,")", sep = "")} else{NA}
+  Sal_ED_Dry$Mid_date_ED<-min(Sal_ED_Dry$date)
+  ############################
+  ddddddddd<-as.numeric( which(ED_Dry$cluster == max(ED_Dry$cluster)))
+  Sal_ED_Dry$Seq_ED[max(ddddddddd)+1]
+  jj<-max(ddddddddd)
+  JJJ<-as.numeric( length(Sal_ED_Dry$Seq_ED))
+  Sal_ED_Dry$Seq_ED[max(ddddddddd)+1]
+  i=Sal_ED_Dry$Seq_ED[max(ddddddddd)+1]
+  #################
+  
+  #for (i in Sal_ED_Dry$Seq){  
+  # m<- assign(paste("segment_", i, sep = "_"),subset(Sal_ED_Dry, Seq==i))}
+  
+  ######################################
+  Max_Seq_ED_Dry<-max(Sal_ED_Dry$Seq_ED)
+  EDPP<-plyr::ddply(Sal_ED_Dry, plyr::.(Seq_ED), function(m){
+    FD<-rkt(m$yearfraction,m$sum_Sal)
+    b0<- median(m$sum_Sal)-(FD$B* median(m$Year))
+    m$overall_slope<- b0+(FD$B*m$Year)
+    length(m$Year)
+    a3<-as.character(m$Year[1]) 
+    b3<-as.character(m$Year[length(m$Year)]) 
+    z3<-as.character(lapply(FD$B, round,2))
+    m$`Sens Slope`<- paste( (if (m$Seq_ED==1){"b)"} else if (m$Seq_ED==2){"c)"} else if (m$Seq_ED==3){"d)"} else if (m$Seq_ED==4){"e)"} else if  (m$Seq_ED==5){"f)"} else {"g)"}) ,a3,"-",b3,":"," ",z3," ","g/L/yr",sep='')
+    m$Max_date_ED<- if (m$Seq_ED< Max_Seq_ED_Dry){as.Date(max(m$date))} else {as.Date.numeric(NA)}
+    m$p.value<- ED_Dry$p.values[m$Seq_ED]
+    m$EDP<- if (m$Seq_ED< Max_Seq_ED_Dry){paste("EDP", m$Seq_ED," ","p","(",m$p.value,")", sep = "")} else {as.character (NA)}
+    m$Seq_p.value<- paste(lapply(FD$sl, round,2))
+    ################
+    myts_Dry_ED <- ts(m$sum_Sal, start=c(min(m$Year)), end=c(max(m$Year)), frequency=1)
+    MKLTP_Dry_Sal_ED<- MannKendallLTP(myts_Dry_ED)
+    m$MKLTP_p.value<- paste("MKLTP", " ","p","(",lapply(MKLTP_Dry_Sal_ED$Mann_Kendall_LTP[2], round,2),")", sep = "")
+    ########################
+    m$Mid_date_ED<- min(m$date)
+    m$Mean<-as.numeric (mean(m$sum_Sal))
+    m$MKLTP.Sig<- if (MKLTP_Dry_Sal_ED$Mann_Kendall_LTP[2]>0.01){
+      paste(lapply(MKLTP_Dry_Sal_ED$Mann_Kendall_LTP[2], round,2))} else {0.001}
+    m$Line<- if(m$MKLTP.Sig<=0.05){NA} else{m$Mean}
+    m$mLine<- as.numeric (if(m$MKLTP.Sig<=0.05){m$overall_slope} else{NA})
+    m$overll_line<-as.numeric (NA)
+    m$Line.pvalue<- as.character(if (m$MKLTP.Sig<=0.05) {paste("MKLTP", " ","p","(",m$MKLTP.Sig,")", sep = "")} else{NA})
+    #################
+    return(m)
+  }
+  )
+  #####################################################################################
+  total_Sal_dry_EDP <- rbind(Sal_ED_Dry,EDPP)
+  ##view(Sal_ED_Dry)
+  tiff(paste0(" Dry Sal_trend_EDP change point ",".tiff"),width=2000, height=1500, res = 350)
+  Dry_Saltrend_EDP1<-ggplot(total_Sal_dry_EDP, aes(x=date, color=`Sens Slope`))+
+    geom_point(aes(y=sum_Sal, color=`Sens Slope`),size=1)+xlab("Date")+ylab("Salinity (g/L)")+
+    ggtitle("Dry Season Trend")+theme_bw()+theme(plot.title = element_text(hjust =0.5 ))
+  Dry_Saltrend_EDP2<-Dry_Saltrend_EDP1+geom_line(aes(y=overll_line),size=0.8,
+                                                   linetype= if(total_Sal_dry_EDP$MKLTP.Sig<= 0.05){"solid"} else {"twodash"} ) 
+  Dry_Saltrend_EDP3<-Dry_Saltrend_EDP2+geom_line(aes(y=Line),size=0.8,linetype="twodash")
+  Dry_Saltrend_EDP4<-Dry_Saltrend_EDP3+geom_line(aes(y=mLine),size=0.8,
+                                                   linetype= if(total_Sal_dry_EDP$MKLTP.Sig<= 0.05){"twodash"} else {"solid"})
+  #################################
+  for (i in total_Sal_dry_EDP$Max_date_ED){
+    Dry_Saltrend_EDP4  <- Dry_Saltrend_EDP4+ 
+      geom_vline(aes_(xintercept =i),size = 0.7,color= "black",linetype="longdash")
+  }
+  
+  Dry_Saltrend_EDP4<-Dry_Saltrend_EDP4+geom_text(mapping = aes(x = Max_date_ED,
+                                                                 y = max(sum_Sal),
+                                                                 label = EDP,
+                                                                 hjust = 1.5,
+                                                                 vjust = 1.5),
+                                                   size=3,
+                                                   angle=90,
+                                                   show.legend = FALSE,
+                                                   data = total_Sal_dry_EDP)
+  
+  Dry_Saltrend_EDP4<-Dry_Saltrend_EDP4+geom_text(mapping = aes(x = Mid_date_ED,
+                                                                 y = max(sum_Sal),
+                                                                 fill=`Sens Slope`,
+                                                                 label = Line.pvalue,
+                                                                 hjust = 1,
+                                                                 vjust = 5.5),
+                                                   size=2.5,
+                                                   angle=90,
+                                                   show.legend = FALSE,
+                                                   data = total_Sal_dry_EDP)
+  Dry_Saltrend_EDP4
+  
+}# end of if
+dev.off()
+###################################################
+##################################### multiple graph
+tiff(paste0(" Annual Sal_wet_dry season trend ",".tiff"),width=2000, height=2500, res = 350)
+f<-ggarrange(annual_Salinitytrend4,Dry_Saltrend4,Wet_Saltrend4, nrow =3, ncol =1, heights = c(10, 10,10),
+             widths =c(0.5) )
+dev.off()
+
+
+###########################################
+#################### overall graph for Salinity
+tiff(paste0(" Overall Salinity trend",".tiff"),width=3000, height=3000, res = 300)
+v<-ggarrange(Salmonthly11,annual_Salinitytrend4,Sal_dry4,Dry_Saltrend4,Sal_wet4,Wet_Saltrend4, nrow =3, 
+             ncol =2 ,labels = c("A", "D","B","E", "C","F"),
+             heights = c(20,20,20),widths =c(10,10))
+dev.off()
+##############################################
+Pararmeters<- as.character( c("2-sided p-value", "Slope (g/L/yr)", "Sig"))
+##########annuall
+Tr_Salinity<-rkt(Sal_monthly$Year,Sal_monthly$Sal,Sal_monthly$Month,,TRUE)
+print(Tr_Salinity)
+
+TR_annual_Sal<-rkt(Sal_yearly$yearfraction,Sal_yearly$Sal)
+print(TR_annual_Sal)
+
+myts_Annuall<- ts(Sal_yearly$Sal, start=c(min(Sal_yearly$Year)), end=c(max(Sal_yearly$Year)), frequency=1)
+MKLTP_Annuall_Sal<- MannKendallLTP(myts_Annuall)
+############ Dry
+Tr_Sal_Dryseason<-rkt(Sal_dryseason$Year,Sal_dryseason$Sal,Sal_dryseason$Month,,TRUE)
+print(Tr_Sal_Dryseason)
+
+TR_dry_Sal<-rkt(Sal_dry$yearfraction,Sal_dry$sum_Sal)
+print(TR_dry_Sal)
+
+myts_Dry<- ts(Sal_dry$sum_Sal, start=c(min(Sal_dry$Year)), end=c(max(Sal_dry$Year)), frequency=1)
+MKLTP_Dry_Sal<- MannKendallLTP(myts_Dry)
+############ wet
+Tr_Sal_Wetseason<-rkt(Sal_wetseason$Year,Sal_wetseason$Sal,Sal_wetseason$Month,,TRUE)
+print(Tr_Sal_Wetseason)
+
+TR_wet_Sal<-rkt(Sal_wet$yearfraction,Sal_wet$sum_Sal)
+print(TR_wet_Sal)
+
+myts_Wet<- ts(Sal_wet$sum_Sal, start=c(min(Sal_wet$Year)), end=c(max(Sal_wet$Year)), frequency=1)
+MKLTP_Wet_Sal<- MannKendallLTP(myts_Wet)
+###################
+`SMK Annuall`<-c(as.numeric(Tr_Salinity$sl),as.numeric(Tr_Salinity$B),if (Tr_Salinity$sl<= 0.01){"**"} 
+                 else if (Tr_Salinity$sl<= 0.05){"*"} else{"-"})
+`SMK Wet`<-c(as.numeric(Tr_Sal_Wetseason$sl),as.numeric(Tr_Sal_Wetseason$B),if (Tr_Sal_Wetseason$sl<= 0.01){"**"} 
+             else if (Tr_Sal_Wetseason$sl<= 0.05){"*"} else{"-"})
+`SMK Dry`<-c(as.numeric(Tr_Sal_Dryseason$sl),as.numeric(Tr_Sal_Dryseason$B),if (Tr_Sal_Dryseason$sl<= 0.01){"**"} 
+             else if (Tr_Sal_Dryseason$sl<= 0.05){"*"} else{"-"})
+##########################
+
+`OMKT Annuall`<-c(as.numeric(TR_annual_Sal$sl),as.numeric(TR_annual_Sal$B),if (TR_annual_Sal$sl<= 0.01){"**"} 
+                  else if (TR_annual_Sal$sl<= 0.05){"*"} else{"-"})
+`OMKT Wet`<-c(as.numeric(TR_wet_Sal$sl),as.numeric(TR_wet_Sal$B),if (TR_wet_Sal$sl<= 0.01){"**"} 
+              else if (TR_wet_Sal$sl<= 0.05){"*"} else{"-"})
+`OMKT Dry`<-c(as.numeric(TR_dry_Sal$sl),as.numeric(TR_dry_Sal$B),if (TR_dry_Sal$sl<= 0.01){"**"} 
+              else if (TR_dry_Sal$sl<= 0.05){"*"} else{"-"})
+####################
+`MKLTP Annuall`<-c(as.numeric(MKLTP_Annuall_Sal $Mann_Kendall_LTP[2]),as.numeric(MKLTP_Annuall_Sal$Mann_Kendall[4]),if (MKLTP_Annuall_Sal$Mann_Kendall_LTP[2]<= 0.01){"**"} 
+                   else if (MKLTP_Annuall_Sal$Mann_Kendall_LTP[2]<= 0.05){"*"} else{"-"})
+`MKLTP Wet`<-c(as.numeric(MKLTP_Wet_Sal$Mann_Kendall_LTP[2]),as.numeric(MKLTP_Wet_Sal$Mann_Kendall[4]),if (MKLTP_Wet_Sal$Mann_Kendall_LTP[2]<= 0.01){"**"} 
+               else if (MKLTP_Wet_Sal$Mann_Kendall_LTP[2]<= 0.05){"*"} else{"-"})
+`MKLTP Dry`<-c(as.numeric(MKLTP_Dry_Sal$Mann_Kendall_LTP[2]), as.numeric(MKLTP_Dry_Sal$Mann_Kendall[4]),if (MKLTP_Dry_Sal$Mann_Kendall_LTP[2]<= 0.01){"**"} 
+               else if (MKLTP_Dry_Sal$Mann_Kendall_LTP[2]<= 0.05){"*"} else{"-"})
+####################### Cerating Table
+Table<- data.frame(Pararmeters,`SMK Annuall`, `SMK Wet`,`SMK Dry`,`OMKT Annuall`,`OMKT Wet`,`OMKT Dry`,
+                   `MKLTP Annuall`,`MKLTP Wet`,`MKLTP Dry`)
+#######################################
+
+Table[] <- lapply(Table, function(x) {
+  x1 <- type.convert(as.character(x), as.is=TRUE)
+  ifelse(grepl("^[0-9.-]+$", x1), round(as.numeric(x1), 3), x1)})
+library(htmltools)
+
+Table1<- formattable(Table,list(
+  Pararmeters= formatter("span", 
+                         style = ~ style(color = "red",font.weight = "bold"))))
+
+saveWidget(as.htmlwidget(Table1), file ="Overall Statistics Table for Salinity.html")
+
+############################### Distribution
+#####################    disrtribution ANALYSIS
+total_Salinity_annuall
+total_Salinity_annuall$Period<- gsub(':.*', "", total_Salinity_annuall$`Sens Slope`)
+###view(total_rainfall_annuall)
+A1<-ggplot(total_Salinity_annuall, aes(Sal, fill=Period, color=Period))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Annuall Salinity")+ylab("Density")
+#######total_Sal_wet
+total_Sal_wet
+total_Sal_wet$Period<- gsub(':.*', "", total_Sal_wet$`Sens Slope`)
+A2<-ggplot(total_Sal_wet, aes(sum_Sal, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Wet Salinity")+ylab("Density")
+A2
+############### 
+total_Sal_dry
+total_Sal_dry$Period<- gsub(':.*', "", total_Sal_dry$`Sens Slope`)
+A3<- ggplot(total_Sal_dry, aes(sum_Sal, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Dry Salinity")+ylab("Density")
+A3
+############
+tiff(paste0(" Annuall_wet_dry season Salinity distribution for ECP ",".tiff"),width=2000, height=2500, res = 350)
+p8<-ggarrange(A1,A3,A2, nrow =3, ncol =1, heights = c(10, 10,10),
+              widths =c(0.5) )
+dev.off()
+#################
+############### Annuall Salinity EDP
+total_Sal_annuall_EDP
+total_Sal_annuall_EDP$Period<- gsub(':.*', "",  total_Sal_annuall_EDP$`Sens Slope`)
+A4<- ggplot( total_Sal_annuall_EDP, aes(Sal, fill=Period, color=Period ))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Annuall Salinity")+ylab("Density")
+
+tiff(paste0(" Annuall Salinity Distribution for EDP",".tiff"),width=2000, height=2500, res = 350)
+p7<-ggarrange( annual_Saltrend_EDP4,A4, nrow =2, ncol =1, heights = c(30,30),
+               widths =c(0.5) )
+dev.off()
+
+#########################Wet
+total_Sal_Wet_EDP
+total_Sal_Wet_EDP$Period<- gsub(':.*', "",total_Sal_Wet_EDP$`Sens Slope`)
+A5<- ggplot(total_Sal_Wet_EDP, aes(sum_Sal, fill=Period, color=Period))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Wet Salinity")+ylab("Density")
+
+tiff(paste0(" Wet Salinity Distribution for EDP",".tiff"),width=2000, height=2500, res = 350)
+p6<-ggarrange(Wet_Saltrend_EDP4,A5, nrow =2, ncol =1, heights = c(30,30),
+              widths =c(0.5) )
+dev.off()
+###############################################
+total_Sal_dry_EDP
+total_Sal_dry_EDP$Period<- gsub(':.*', "",total_Sal_dry_EDP$`Sens Slope`)
+A6<- ggplot(total_Sal_dry_EDP, aes(sum_Sal, fill=Period, color=Period))+geom_density(alpha = 0.1)+
+  theme_bw()+theme(plot.title = element_text(hjust =0.5 ))+xlab("Dry Salinity")+ylab("Density")
+
+tiff(paste0(" Dry Salinity Distribution for EDP",".tiff"),width=2000, height=2500, res = 350)
+g<-ggarrange(Dry_Saltrend_EDP4,A6, nrow =2, ncol =1, heights = c(30,30),
+             widths =c(0.5) )
+dev.off()
+
+
+####################################
+########## Facebook's Prophet 
+Sal <- read_excel("Sal.xlsx", col_types = c("date", 
+                                              "numeric", "numeric"))
+########## Salinity
+m<- data.frame(Sal$date,Sal$Sal)
+colnames(m) <- c("ds","y")
+M<- prophet(m)
+future<- make_future_dataframe(M, periods = 365)
+tail(future)
+####Forcast
+forcast<- predict(M, future)
+tail(forcast)
+##### Model performance
+length(Sal$Sal)
+ pred<- forcast$yhat[1:length(Sal$Sal)]
+ Actual<- M$history$y
+plot(Actual,pred)
+abline(lm(pred~Actual), col= "red")
+statics<- summary(lm(pred~Actual))
+capture.output(summary(print(lm(pred~Actual))), file = "Model performance prophet Salinity test results.txt")
+ #####################
+plot(M,forcast)+ add_changepoints_to_plot(M)
+
+dyplot.prophet(M, forcast)
+
+saveWidget(dyplot.prophet(M, forcast), file="Salactivity prediction.html")
+prophet_plot_components(
+  M,
+ forcast,
+  uncertainty = TRUE,
+  plot_cap = TRUE,
+  weekly_start = 0,
+  yearly_start = 0,
+  render_plot = TRUE
+)
+  
+
+
+tiff(paste0(" Prophet river Salinity trend",".tiff"),width=3000, height=3000, res = 300)
+plot(M,forcast)+ add_changepoints_to_plot(M)
+dev.off()
+################### temp
+m<- data.frame(Sal$date,Sal$Temp)
+colnames(m) <- c("ds","y")
+M<- prophet(m)
+future<- make_future_dataframe(M, periods = 365)
+tail(future)
+####Forcast
+forcast<- predict(M, future)
+tail(forcast)
+##### Model performance
+
+pred<- forcast$yhat[1:length(Sal$Temp)]
+Actual<- M$history$y
+length(M$history$y)
+plot(Actual,pred)
+abline(lm(pred~Actual), col= "red")
+statics<- summary(lm(pred~Actual))
+capture.output(summary(print(lm(pred~Actual))), file = "Model performance prophet TEMP test results.txt")
+#####################
+plot(M,forcast)+ add_changepoints_to_plot(M)
+dyplot.prophet(M, forcast)
+saveWidget(dyplot.prophet(M, forcast), file="Temp prediction.html")
+prophet_plot_components(
+  M,
+  forcast,
+  uncertainty = TRUE,
+  plot_cap = TRUE,
+  weekly_start = 0,
+  yearly_start = 0,
+  render_plot = TRUE
+)
+
+tiff(paste0(" Prophet river Temperature trend",".tiff"),width=3000, height=3000, res = 300)
+plot(M,forcast)+ add_changepoints_to_plot(M)
+dev.off()
+##########################
+dev.off()
+rm(list=ls())
+#}# end of loop
